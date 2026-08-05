@@ -33,8 +33,9 @@ oauth_config:
     bot:
       # Receive @Kandev mentions.
       - app_mentions:read
-      # Read the surrounding thread for context. groups: covers private
-      # channels; drop it if the bot only ever works in public ones.
+      # Read the surrounding thread, or the recent channel conversation when a
+      # mention is not threaded, for context. groups: covers private channels;
+      # drop it if the bot only ever works in public ones.
       - channels:history
       - groups:history
       # Post the triage reply.

@@ -15,9 +15,13 @@ Kandev:         Filed this in Platform › Engineering › Backlog as
 
 Two ways to trigger it:
 
-- **`@Kandev <what needs doing>`** in any channel the bot is in.
+- **`@Kandev <what needs doing>`** in any channel the bot is in. Mention it
+  inside a thread and the agent reads that thread; mention it in the channel
+  and it reads the ~20 messages leading up to you, so "@Kandev file what Bob
+  just said" works.
 - **`/kandev <what needs doing>`** anywhere, including channels the bot is not
-  a member of.
+  a member of. The answer comes back privately to you, since that is how you
+  asked. It reads the recent channel conversation for context.
 
 ## Setup
 
@@ -97,7 +101,9 @@ the plugin does the tool work itself:
 3. Validate the answer against the real topology — a hallucinated id falls back
    to the first workspace rather than dropping the request — and create the task
    through the Host API.
-4. Post the agent's reply in-thread, with the task identifier appended.
+4. Reply with the task identifier appended — in-thread for a mention, and
+   privately through the command's `response_url` for `/kandev`, which also
+   works in channels the bot was never invited to.
 
 Slack redelivers any Socket Mode envelope it does not see acknowledged within
 three seconds, so envelopes are acknowledged before triage starts and requests

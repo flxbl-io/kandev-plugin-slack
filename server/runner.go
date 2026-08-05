@@ -32,6 +32,10 @@ type inboundRequest struct {
 	// slash command, or the `!kandev` marker.
 	Instruction string
 	Permalink   string
+	// ResponseURL is set for slash commands: a pre-authorized callback that
+	// answers the person who ran the command, in channels the bot may not be
+	// a member of.
+	ResponseURL string
 	// Acknowledge is false when there is no message in the channel to react
 	// to — a slash command is only visible to the person who ran it.
 	Acknowledge bool
@@ -181,12 +185,11 @@ func (r *runner) triage(
 			log.Printf("slack: acknowledge reaction failed: %v", err)
 		}
 	}
-	thread, err := cl.ThreadContext(ctx, req.ChannelID, req.ThreadTS, req.TS)
+	thread, err := cl.ConversationContext(ctx, req.ChannelID, req.ThreadTS, req.TS)
 	if err != nil {
-		// A slash command has no anchoring message, and a channel the app
-		// cannot read history for still deserves a task from the instruction
-		// alone. Context is a bonus, not a precondition.
-		log.Printf("slack: thread context unavailable: %v", err)
+		// A channel the app cannot read history for still deserves a task from
+		// the instruction alone. Context is a bonus, not a precondition.
+		log.Printf("slack: conversation context unavailable: %v", err)
 		thread = nil
 	}
 	permalink := req.Permalink
@@ -244,8 +247,9 @@ func createTask(
 	return task, nil
 }
 
-// reply posts the agent's summary back into Slack. A failure is logged but not
-// returned: the task exists, and failing here would re-triage into a duplicate.
+// reply sends the agent's summary back to Slack by whichever route the request
+// arrived on. A failure is logged but not returned: the task exists, and
+// failing here would re-triage into a duplicate.
 func (r *runner) reply(
 	ctx context.Context, cl *client, req inboundRequest,
 	decision *triageDecision, task *pluginsdk.Task,
@@ -260,6 +264,16 @@ func (r *runner) reply(
 		} else {
 			body += "\n\n*" + task.Title + "*"
 		}
+	}
+	// A slash command was invoked privately and may well be in a channel the
+	// bot was never invited to. Answering in-channel would both expose a
+	// private action and fail outright on membership, leaving a task created
+	// with no feedback at all.
+	if req.ResponseURL != "" {
+		if err := cl.RespondToCommand(ctx, req.ResponseURL, body); err != nil {
+			log.Printf("slack: command response failed: %v", err)
+		}
+		return
 	}
 	if err := cl.PostMessage(ctx, req.ChannelID, req.replyThread(), body); err != nil {
 		log.Printf("slack: reply failed: %v", err)

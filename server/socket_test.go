@@ -321,3 +321,58 @@ func TestExplainAppTokenErrorNamesTheAppLevelToken(t *testing.T) {
 		t.Fatalf("explainAppTokenError = %q, want unknown codes verbatim", got)
 	}
 }
+
+// A slash command is answered through its response_url, not chat.postMessage:
+// it was invoked privately, and the bot may not be in that channel at all.
+func TestDecodeSlashCommandCapturesTheResponseURL(t *testing.T) {
+	payload := json.RawMessage(`{"channel_id":"C1","user_id":"U1","text":"fix it","command":"/kandev",
+		"response_url":"https://hooks.slack.com/commands/T1/123/abc"}`)
+	req, ok := decodeSlashCommand(payload)
+	if !ok {
+		t.Fatal("slash command was not decoded")
+	}
+	if req.ResponseURL != "https://hooks.slack.com/commands/T1/123/abc" {
+		t.Fatalf("ResponseURL = %q", req.ResponseURL)
+	}
+}
+
+// A mention has no response_url, so it must keep replying in-thread.
+func TestMentionHasNoResponseURL(t *testing.T) {
+	l := &socketListener{botUserID: "U0BOT"}
+	req, ok := l.decodeEvent(json.RawMessage(
+		`{"event":{"type":"app_mention","user":"U1","text":"<@U0BOT> x","ts":"2.0","channel":"C1"}}`))
+	if !ok {
+		t.Fatal("mention was not decoded")
+	}
+	if req.ResponseURL != "" {
+		t.Fatalf("ResponseURL = %q, want empty for a mention", req.ResponseURL)
+	}
+}
+
+// The response_url arrives inside a payload, and a payload is data. Posting to
+// it unchecked would turn a malformed or spoofed frame into an outbound
+// request to an arbitrary host.
+func TestValidateResponseURLRejectsNonSlackDestinations(t *testing.T) {
+	cases := []struct {
+		name, url, wantErr string
+	}{
+		{name: "empty", url: "", wantErr: "no response_url"},
+		{name: "plain http", url: "http://hooks.slack.com/x", wantErr: "must be https"},
+		{name: "foreign host", url: "https://evil.example.com/x", wantErr: "does not point at Slack"},
+		{name: "suffix lookalike", url: "https://notslack.com/x", wantErr: "does not point at Slack"},
+		{name: "embedded lookalike", url: "https://slack.com.evil.example/x", wantErr: "does not point at Slack"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateResponseURL(tc.url)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("validateResponseURL(%q) = %v, want containing %q", tc.url, err, tc.wantErr)
+			}
+		})
+	}
+	for _, ok := range []string{"https://hooks.slack.com/commands/T1/1/a", "https://slack.com/x"} {
+		if err := validateResponseURL(ok); err != nil {
+			t.Fatalf("validateResponseURL(%q) = %v, want accepted", ok, err)
+		}
+	}
+}

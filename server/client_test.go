@@ -104,61 +104,81 @@ func TestSearchMessagesMapsMatches(t *testing.T) {
 	}
 }
 
-// Slack's `oldest` is inclusive, so the watermark message comes back on every
-// poll. Returning it would re-triage the same request forever.
-func TestChannelHistoryExcludesTheWatermarkMessage(t *testing.T) {
+// A mention that is not in a thread used to fetch only its own message, so
+// "@Kandev file what Bob just said" reached the agent with no idea what Bob
+// said. It now gathers the conversation leading up to the mention.
+func TestConversationContextGathersRecentHistoryForANonThreadedMention(t *testing.T) {
+	c, rec := newTestClient(t, `{"ok":true,"messages":[
+		{"ts":"5.0","text":"@Kandev file that","user":"U2"},
+		{"ts":"4.0","text":"only on safari","user":"U1"},
+		{"ts":"3.0","text":"login redirect loops","user":"U1"}]}`)
+	msgs, err := c.ConversationContext(context.Background(), "C1", "", "5.0")
+	if err != nil {
+		t.Fatalf("ConversationContext: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("got %d messages, want the mention plus its context", len(msgs))
+	}
+	// Slack returns history newest-first; the prompt needs reading order.
+	if msgs[0].TS != "3.0" || msgs[2].TS != "5.0" {
+		t.Fatalf("order = %s..%s, want oldest first", msgs[0].TS, msgs[2].TS)
+	}
+	if rec.Form.Get("latest") != "5.0" || rec.Form.Get("inclusive") != "true" {
+		t.Fatalf("window = %v, want it anchored at the trigger", rec.Form)
+	}
+	// Anchoring at the trigger is what keeps messages that landed between
+	// detection and processing out of the agent's context.
+	if rec.Form.Get("oldest") != "" {
+		t.Fatalf("oldest = %q, want an open lower bound", rec.Form.Get("oldest"))
+	}
+	if rec.Form.Get("limit") != "20" {
+		t.Fatalf("limit = %q, want the context window", rec.Form.Get("limit"))
+	}
+}
+
+// A slash command has no message of its own, so "now" is the right anchor:
+// the conversation the user was looking at when they ran it.
+func TestConversationContextForASlashCommandReadsTheLatestMessages(t *testing.T) {
+	c, rec := newTestClient(t, `{"ok":true,"messages":[{"ts":"9.0","text":"latest","user":"U1"}]}`)
+	msgs, err := c.ConversationContext(context.Background(), "C1", "", "")
+	if err != nil {
+		t.Fatalf("ConversationContext: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("got %d messages, want the recent channel history", len(msgs))
+	}
+	if rec.Form.Get("latest") != "" {
+		t.Fatalf("latest = %q, want an open upper bound for a command", rec.Form.Get("latest"))
+	}
+}
+
+// A threaded mention is answered from the thread, not the channel.
+func TestConversationContextUsesTheThreadWhenThereIsOne(t *testing.T) {
+	c, rec := newTestClient(t, `{"ok":true,"messages":[{"ts":"2.0","text":"in thread","user":"U1"}]}`)
+	if _, err := c.ConversationContext(context.Background(), "C1", "1.0", "2.0"); err != nil {
+		t.Fatalf("ConversationContext: %v", err)
+	}
+	if rec.Method != "conversations.replies" || rec.Form.Get("ts") != "1.0" {
+		t.Fatalf("called %q with %v, want conversations.replies on the parent", rec.Method, rec.Form)
+	}
+}
+
+// Joins and topic changes are noise; a monitoring bot's alert usually *is* the
+// thing being triaged, so app messages are kept.
+func TestConversationContextSkipsSubtypesButKeepsAppMessages(t *testing.T) {
 	c, _ := newTestClient(t, `{"ok":true,"messages":[
-		{"ts":"3.0","text":"!kandev newer","user":"U1"},
-		{"ts":"2.0","text":"!kandev watermark","user":"U1"}]}`)
-	msgs, err := c.ChannelHistory(context.Background(), "C1", "2.0")
+		{"ts":"7.0","text":"@Kandev file this","user":"U1"},
+		{"ts":"6.0","text":"CRITICAL: checkout 500s","bot_id":"B_SENTRY"},
+		{"ts":"5.0","text":"joined the channel","subtype":"channel_join","user":"U2"}]}`)
+	msgs, err := c.ConversationContext(context.Background(), "C1", "", "7.0")
 	if err != nil {
-		t.Fatalf("ChannelHistory: %v", err)
+		t.Fatalf("ConversationContext: %v", err)
 	}
-	if len(msgs) != 1 || msgs[0].TS != "3.0" {
-		t.Fatalf("got %+v, want only ts 3.0", msgs)
+	if len(msgs) != 2 {
+		t.Fatalf("got %d messages, want the alert and the mention", len(msgs))
 	}
-}
-
-// Joins, topic changes and bot posts are not user requests; replying to our
-// own reply would loop.
-func TestChannelHistorySkipsSubtypesAndBotPosts(t *testing.T) {
-	c, _ := newTestClient(t, `{"ok":true,"messages":[
-		{"ts":"5.0","text":"joined","subtype":"channel_join","user":"U1"},
-		{"ts":"6.0","text":"from a bot","bot_id":"B1"},
-		{"ts":"7.0","text":"!kandev real","user":"U1"}]}`)
-	msgs, err := c.ChannelHistory(context.Background(), "C1", "")
-	if err != nil {
-		t.Fatalf("ChannelHistory: %v", err)
-	}
-	if len(msgs) != 1 || msgs[0].TS != "7.0" {
-		t.Fatalf("got %+v, want only the real user message", msgs)
-	}
-}
-
-// A non-threaded trigger must read exactly its own message, not whatever
-// landed in the channel since it was detected.
-func TestThreadContextPinsToTheTriggerWhenNotThreaded(t *testing.T) {
-	c, rec := newTestClient(t, `{"ok":true,"messages":[{"ts":"4.0","text":"!kandev x","user":"U1"}]}`)
-	msgs, err := c.ThreadContext(context.Background(), "C1", "", "4.0")
-	if err != nil {
-		t.Fatalf("ThreadContext: %v", err)
-	}
-	if len(msgs) != 1 || msgs[0].TS != "4.0" {
-		t.Fatalf("got %+v, want the trigger message", msgs)
-	}
-	if rec.Form.Get("oldest") != "4.0" || rec.Form.Get("latest") != "4.0" || rec.Form.Get("inclusive") != "true" {
-		t.Fatalf("history window = %v, want both ends pinned to the trigger", rec.Form)
-	}
-}
-
-func TestThreadContextEmptyTriggerReadsNothing(t *testing.T) {
-	c, _ := newTestClient(t, `{"ok":true,"messages":[{"ts":"9.0","text":"unrelated"}]}`)
-	msgs, err := c.ThreadContext(context.Background(), "C1", "", "")
-	if err != nil {
-		t.Fatalf("ThreadContext: %v", err)
-	}
-	if len(msgs) != 0 {
-		t.Fatalf("got %+v, want nothing rather than the channel's latest", msgs)
+	if msgs[0].Text != "CRITICAL: checkout 500s" {
+		t.Fatalf("first context message = %q, want the alert retained", msgs[0].Text)
 	}
 }
 

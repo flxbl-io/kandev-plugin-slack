@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -321,95 +322,37 @@ type conversationMessage struct {
 	Subtype  string `json:"subtype,omitempty"`
 }
 
-// historyPageSize bounds one conversations.history page in bot mode. A
-// channel quieter than this per poll interval is fully covered; a busier one
-// advances the watermark and catches up on the next tick.
+// historyPageSize bounds one conversations.replies page. A thread longer than
+// this is truncated to its first page rather than paged through: the agent's
+// context is the real limit, not Slack's.
 const historyPageSize = 100
 
-// ChannelHistory returns messages posted after `oldest` in one channel. This
-// is the bot-token trigger: an xoxb- token cannot search, but it can read the
-// history of any channel it has been invited to.
+// contextMessageLimit is how much of the surrounding channel conversation is
+// gathered when a request is not anchored in a thread. A mention like
+// "@Kandev file what Bob just said" is meaningless without the messages before
+// it, and a request with no preceding context loses nothing by asking.
+const contextMessageLimit = 20
+
+// ConversationContext returns the conversation a request should be triaged
+// against.
 //
-// Slack treats `oldest` as inclusive, so the caller's watermark message comes
-// back on every poll; it is filtered out here rather than in the trigger so
-// the "strictly newer" contract belongs to the one function that knows about
-// Slack's inclusivity quirk.
-func (c *client) ChannelHistory(ctx context.Context, channelID, oldest string) ([]message, error) {
+// A request inside a thread gets that thread. Anything else gets the recent
+// channel history up to and including the triggering message — never past it,
+// because messages that landed between detection and processing are unrelated
+// to what the user asked for. A slash command has no triggering message, so
+// its anchor is "now", which is the conversation the user was looking at when
+// they ran it.
+func (c *client) ConversationContext(ctx context.Context, channelID, threadTS, triggerTS string) ([]message, error) {
 	if channelID == "" {
 		return nil, errors.New("channel id required")
 	}
-	params := url.Values{}
-	params.Set("channel", channelID)
-	params.Set("limit", strconv.Itoa(historyPageSize))
-	if oldest != "" {
-		params.Set("oldest", oldest)
+	if threadTS != "" {
+		return c.threadReplies(ctx, channelID, threadTS)
 	}
-	var resp conversationsResponse
-	if err := c.post(ctx, "conversations.history", params, &resp); err != nil {
-		return nil, err
-	}
-	out := make([]message, 0, len(resp.Messages))
-	for _, m := range resp.Messages {
-		// Skip joins/leaves/topic changes and anything this or another bot
-		// posted — replying to our own reply would loop.
-		if m.Subtype != "" || m.BotID != "" {
-			continue
-		}
-		if oldest != "" && compareTS(m.TS, oldest) <= 0 {
-			continue
-		}
-		out = append(out, message{
-			TS:        m.TS,
-			ThreadTS:  m.ThreadTS,
-			ChannelID: channelID,
-			UserID:    m.User,
-			UserName:  m.Username,
-			Text:      m.Text,
-		})
-	}
-	return out, nil
+	return c.recentHistory(ctx, channelID, triggerTS, contextMessageLimit)
 }
 
-// ThreadContext returns the conversation surrounding a triggering message.
-// When threadTS is empty the message is not in a thread, and the fallback
-// reads exactly the triggering message: pinning both ends of the window to
-// triggerTS keeps unrelated channel activity between detection and
-// processing out of the agent's context.
-func (c *client) ThreadContext(ctx context.Context, channelID, threadTS, triggerTS string) ([]message, error) {
-	if channelID == "" {
-		return nil, errors.New("channel id required")
-	}
-	if threadTS == "" {
-		return c.historyAt(ctx, channelID, triggerTS)
-	}
-	params := url.Values{}
-	params.Set("channel", channelID)
-	params.Set("ts", threadTS)
-	params.Set("limit", strconv.Itoa(historyPageSize))
-	var resp conversationsResponse
-	if err := c.post(ctx, "conversations.replies", params, &resp); err != nil {
-		return nil, err
-	}
-	return toMessages(channelID, resp.Messages), nil
-}
-
-func (c *client) historyAt(ctx context.Context, channelID, ts string) ([]message, error) {
-	if ts == "" {
-		return nil, nil
-	}
-	params := url.Values{}
-	params.Set("channel", channelID)
-	params.Set("oldest", ts)
-	params.Set("latest", ts)
-	params.Set("inclusive", "true")
-	params.Set("limit", "1")
-	var resp conversationsResponse
-	if err := c.post(ctx, "conversations.history", params, &resp); err != nil {
-		return nil, err
-	}
-	return toMessages(channelID, resp.Messages), nil
-}
-
+// toMessages maps Slack's conversation shape onto the plugin's.
 func toMessages(channelID string, in []conversationMessage) []message {
 	out := make([]message, 0, len(in))
 	for _, m := range in {
@@ -423,6 +366,54 @@ func toMessages(channelID string, in []conversationMessage) []message {
 		})
 	}
 	return out
+}
+
+func (c *client) threadReplies(ctx context.Context, channelID, threadTS string) ([]message, error) {
+	params := url.Values{}
+	params.Set("channel", channelID)
+	params.Set("ts", threadTS)
+	params.Set("limit", strconv.Itoa(historyPageSize))
+	var resp conversationsResponse
+	if err := c.post(ctx, "conversations.replies", params, &resp); err != nil {
+		return nil, err
+	}
+	return toMessages(channelID, resp.Messages), nil
+}
+
+// recentHistory reads the newest `limit` messages at or before latestTS. An
+// empty latestTS means "up to now". Slack returns history newest-first, so the
+// result is reversed into reading order before it reaches the prompt.
+func (c *client) recentHistory(ctx context.Context, channelID, latestTS string, limit int) ([]message, error) {
+	params := url.Values{}
+	params.Set("channel", channelID)
+	params.Set("limit", strconv.Itoa(limit))
+	if latestTS != "" {
+		params.Set("latest", latestTS)
+		params.Set("inclusive", "true")
+	}
+	var resp conversationsResponse
+	if err := c.post(ctx, "conversations.history", params, &resp); err != nil {
+		return nil, err
+	}
+	out := make([]message, 0, len(resp.Messages))
+	for i := len(resp.Messages) - 1; i >= 0; i-- {
+		m := resp.Messages[i]
+		// Joins, leaves and topic changes are noise. Messages from other apps
+		// are kept deliberately — an alert posted by a monitoring bot is often
+		// exactly the context the request is about.
+		if m.Subtype != "" {
+			continue
+		}
+		out = append(out, message{
+			TS:        m.TS,
+			ThreadTS:  m.ThreadTS,
+			ChannelID: channelID,
+			UserID:    m.User,
+			UserName:  m.Username,
+			Text:      m.Text,
+		})
+	}
+	return out, nil
 }
 
 // --- chat.getPermalink ---
@@ -493,4 +484,73 @@ func compareTS(a, b string) int {
 	default:
 		return 1
 	}
+}
+
+// RespondToCommand replies to a slash command through the response_url Slack
+// issued with it. This is not the same channel as chat.postMessage: the URL is
+// pre-authorized, so it works in channels the bot was never invited to, and an
+// ephemeral response is visible only to the person who ran the command —
+// matching how they invoked it.
+//
+// The URL is valid for 30 minutes and 5 uses, which comfortably covers one
+// triage run.
+func (c *client) RespondToCommand(ctx context.Context, responseURL, text string) error {
+	if err := validateResponseURL(responseURL); err != nil {
+		return err
+	}
+	body, err := json.Marshal(map[string]string{
+		"response_type": "ephemeral",
+		"text":          text,
+	})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, responseURL, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", userAgent)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return &apiError{StatusCode: resp.StatusCode, Message: summarizeBody(raw)}
+	}
+	return nil
+}
+
+// validateResponseURL confirms the callback really points at Slack before the
+// plugin posts to it. The URL arrives inside a payload, and a payload is data:
+// treating it as a destination without checking would turn a malformed or
+// spoofed frame into an outbound request to an arbitrary host.
+func validateResponseURL(raw string) error {
+	if raw == "" {
+		return errors.New("no response_url on this command")
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("unusable response_url: %w", err)
+	}
+	// The stub used by the end-to-end test is plain HTTP on localhost; the
+	// scheme requirement only applies to the real Slack host.
+	if parsed.Scheme != "https" && slackHostSuffix == "slack.com" {
+		return fmt.Errorf("response_url must be https, got %q", parsed.Scheme)
+	}
+	if !isSlackHost(parsed.Hostname()) {
+		return fmt.Errorf("response_url does not point at Slack: %q", parsed.Hostname())
+	}
+	return nil
+}
+
+// slackHostSuffix is the accepted response_url host. It is a var only so the
+// end-to-end test can point delivery at its stub; production never changes it,
+// and the rejection rules are covered directly against the default.
+var slackHostSuffix = "slack.com"
+
+func isSlackHost(host string) bool {
+	return host == slackHostSuffix || strings.HasSuffix(host, "."+slackHostSuffix)
 }

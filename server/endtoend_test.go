@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -140,6 +142,9 @@ type stubSlack struct {
 	mu    sync.Mutex
 	calls map[string]int
 	posts []string
+	// commandResponses records bodies delivered to a slash command's
+	// response_url, which is a different route from chat.postMessage.
+	commandResponses []string
 	// searchBody is returned for search.messages.
 	searchBody string
 }
@@ -148,6 +153,14 @@ func newStubSlack(t *testing.T, searchBody string) *stubSlack {
 	t.Helper()
 	s := &stubSlack{calls: map[string]int{}, searchBody: searchBody}
 	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/commands/") {
+			body, _ := io.ReadAll(r.Body)
+			s.mu.Lock()
+			s.commandResponses = append(s.commandResponses, string(body))
+			s.mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		method := strings.TrimPrefix(r.URL.Path, "/")
 		_ = r.ParseForm()
 		s.mu.Lock()
@@ -191,6 +204,18 @@ func (s *stubSlack) postedTexts() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.posts...)
+}
+
+func (s *stubSlack) commandReplies() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.commandResponses...)
+}
+
+// responseURL points at the stub while still satisfying the Slack-host check,
+// so the validation and the delivery are both exercised.
+func (s *stubSlack) responseURL() string {
+	return s.srv.URL + "/commands/T1/1/abc"
 }
 
 func sessionRawConfig() map[string]any {
@@ -432,5 +457,82 @@ func TestPromptCarriesTheRealTopology(t *testing.T) {
 		if !strings.Contains(host.prompts[0], want) {
 			t.Fatalf("prompt missing %q", want)
 		}
+	}
+}
+
+// A slash command is invoked privately and may be run in a channel the bot was
+// never invited to. Answering with chat.postMessage would both expose a
+// private action and fail outright on membership, leaving a task created with
+// no feedback at all.
+func TestSlashCommandRepliesThroughResponseURL(t *testing.T) {
+	slack := newStubSlack(t, "")
+	// Point the host check at the stub for this test; the check itself is
+	// covered directly in socket_test.go.
+	restore := slackHostSuffix
+	stubHost, err := url.Parse(slack.srv.URL)
+	if err != nil {
+		t.Fatalf("parse stub url: %v", err)
+	}
+	// Hostname() drops the port, so the suffix must too.
+	slackHostSuffix = stubHost.Hostname()
+	t.Cleanup(func() { slackHostSuffix = restore })
+
+	host := newFakeHost(map[string]any{
+		"app_token": "xapp-1-test", "bot_token": "xoxb-test", "utility_agent": "agent-1",
+	})
+	cfg, _ := loadConfig(host.config)
+	r := newRunner(func() pluginsdk.Host { return host })
+
+	if err := r.Handle(context.Background(), cfg, inboundRequest{
+		ChannelID:   "C1",
+		UserID:      "U1",
+		Instruction: "fix sso",
+		ResponseURL: slack.responseURL(),
+	}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(host.createdTasks()) != 1 {
+		t.Fatalf("created %d tasks, want 1", len(host.createdTasks()))
+	}
+	replies := slack.commandReplies()
+	if len(replies) != 1 {
+		t.Fatalf("delivered %d command replies, want 1", len(replies))
+	}
+	if !strings.Contains(replies[0], "Filed it.") || !strings.Contains(replies[0], "PLAT-482") {
+		t.Fatalf("reply = %q, want the agent text and the identifier", replies[0])
+	}
+	// Ephemeral keeps the answer with the person who asked, matching how the
+	// command was invoked.
+	if !strings.Contains(replies[0], `"response_type":"ephemeral"`) {
+		t.Fatalf("reply = %q, want an ephemeral response", replies[0])
+	}
+	if n := slack.callCount("chat.postMessage"); n != 0 {
+		t.Fatalf("chat.postMessage called %d times, want the command route only", n)
+	}
+	if n := slack.callCount("reactions.add"); n != 0 {
+		t.Fatalf("reactions.add called %d times; a command has no message to react to", n)
+	}
+}
+
+// A mention still answers in-thread — the response_url route must not leak
+// into the path that has a real message to reply under.
+func TestMentionStillRepliesInChannel(t *testing.T) {
+	slack := newStubSlack(t, "")
+	host := newFakeHost(map[string]any{
+		"app_token": "xapp-1-test", "bot_token": "xoxb-test", "utility_agent": "agent-1",
+	})
+	cfg, _ := loadConfig(host.config)
+	r := newRunner(func() pluginsdk.Host { return host })
+
+	if err := r.Handle(context.Background(), cfg, inboundRequest{
+		ChannelID: "C1", TS: "2.0", Instruction: "fix sso", Acknowledge: true,
+	}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(slack.postedTexts()) != 1 {
+		t.Fatalf("posted %d in-channel replies, want 1", len(slack.postedTexts()))
+	}
+	if len(slack.commandReplies()) != 0 {
+		t.Fatal("a mention must not use the command response route")
 	}
 }

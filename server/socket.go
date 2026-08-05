@@ -70,6 +70,9 @@ type slashCommandPayload struct {
 	UserName  string `json:"user_name"`
 	Text      string `json:"text"`
 	Command   string `json:"command"`
+	// ResponseURL is a pre-authorized callback Slack issues per invocation. It
+	// is how a command is answered without the bot being in the channel.
+	ResponseURL string `json:"response_url"`
 }
 
 // openConnectionResponse is apps.connections.open's reply.
@@ -286,8 +289,8 @@ func (l *socketListener) decodeEvent(payload json.RawMessage) (inboundRequest, b
 }
 
 // decodeSlashCommand handles /kandev. A slash command has no message of its
-// own in the channel, so there is nothing to react to and nothing to thread
-// under — the reply starts a new thread instead.
+// own in the channel, so there is nothing to react to; the reply goes back
+// through the command's response_url instead of into the channel.
 func decodeSlashCommand(payload json.RawMessage) (inboundRequest, bool) {
 	var p slashCommandPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
@@ -304,6 +307,7 @@ func decodeSlashCommand(payload json.RawMessage) (inboundRequest, bool) {
 		UserName:    p.UserName,
 		Text:        p.Command + " " + instruction,
 		Instruction: instruction,
+		ResponseURL: p.ResponseURL,
 		Acknowledge: false,
 	}, true
 }
