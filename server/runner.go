@@ -84,10 +84,16 @@ func newRunner(host func() pluginsdk.Host) *runner {
 	return &runner{host: host, seen: make(map[string]bool)}
 }
 
+// requestKey identifies a request across redeliveries and retries.
+func requestKey(req inboundRequest) string {
+	return req.ChannelID + "/" + req.TS + "/" + req.Instruction
+}
+
 // claim reports whether this request is new. A repeat — Slack's retry, or a
-// replay after a reconnect — is dropped rather than triaged twice.
+// replay after a reconnect — is dropped rather than triaged twice. The claim
+// is taken before the work starts, so two in-flight copies cannot both run.
 func (r *runner) claim(req inboundRequest) bool {
-	key := req.ChannelID + "/" + req.TS + "/" + req.Instruction
+	key := requestKey(req)
 	r.seenMu.Lock()
 	defer r.seenMu.Unlock()
 	if r.seen[key] {
@@ -102,24 +108,48 @@ func (r *runner) claim(req inboundRequest) bool {
 	return true
 }
 
-// Handle triages one request end to end. Failures are recorded on the status
-// record and logged; they are never returned to the socket, which has already
-// been acknowledged.
-func (r *runner) Handle(ctx context.Context, cfg *config, req inboundRequest) {
-	if !r.claim(req) {
+// release drops a claim so a failed request can be retried. Without it the
+// claim taken above would make the failure permanent: the session fallback
+// re-finds the same message on its next scan and would discard it as a
+// duplicate, and a redelivered Socket Mode envelope would meet the same fate.
+func (r *runner) release(req inboundRequest) {
+	key := requestKey(req)
+	r.seenMu.Lock()
+	defer r.seenMu.Unlock()
+	if !r.seen[key] {
 		return
+	}
+	delete(r.seen, key)
+	for i, existing := range r.seenOrder {
+		if existing == key {
+			r.seenOrder = append(r.seenOrder[:i], r.seenOrder[i+1:]...)
+			break
+		}
+	}
+}
+
+// Handle triages one request end to end. The returned error is never sent back
+// to Slack — the socket envelope is already acknowledged — but the session
+// fallback needs it to decide whether its watermark may advance past this
+// message.
+func (r *runner) Handle(ctx context.Context, cfg *config, req inboundRequest) error {
+	if !r.claim(req) {
+		return nil
 	}
 	host := r.host()
 	if host == nil {
-		log.Printf("slack: dropping request, plugin host unavailable")
-		return
+		r.release(req)
+		return errors.New("plugin host unavailable")
 	}
 	entry, err := r.triage(ctx, host, cfg, req)
 	if err != nil {
+		// Give the claim back so the next scan (or redelivery) can retry.
+		r.release(req)
 		log.Printf("slack: triage failed: %v", err)
 		entry = recentEntry{At: nowRFC3339(), Text: firstLine(req.Instruction), Error: err.Error()}
 	}
 	r.record(ctx, host, entry, err)
+	return err
 }
 
 // record appends the outcome to the status record the plugin page renders.

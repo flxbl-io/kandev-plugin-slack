@@ -35,11 +35,16 @@ type supervisor struct {
 
 	mu sync.Mutex
 	// active fingerprints the config the current source was started for.
-	active     string
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
-	lastScan   time.Time
-	lastProbe  time.Time
+	active    string
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	lastScan  time.Time
+	lastProbe time.Time
+	// probedFor fingerprints the credentials the last auth probe validated. It
+	// is deliberately separate from `active`, which the source lifecycle
+	// clears on every tick in fallback mode — sharing them made the fallback
+	// re-probe on every single scan instead of once per probeInterval.
+	probedFor  string
 	socketUp   bool
 	socketErr  string
 	socketSeen bool
@@ -127,7 +132,9 @@ func (s *supervisor) ensureSocket(ctx context.Context, cfg *config) {
 		appToken:  cfg.AppToken,
 		botUserID: botUserID,
 		handle: func(reqCtx context.Context, req inboundRequest) {
-			s.runner.Handle(reqCtx, cfg, req)
+			// Already acknowledged to Slack; the error is recorded on the
+			// status record by Handle itself.
+			_ = s.runner.Handle(reqCtx, cfg, req)
 		},
 		onState: s.noteSocketState,
 	}
@@ -268,11 +275,12 @@ func (s *supervisor) scan(ctx context.Context, host pluginsdk.Host, cfg *config)
 	if err := writeStatus(ctx, host, st); err != nil {
 		return err
 	}
+	advanced := false
 	for _, m := range matches {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		s.runner.Handle(ctx, cfg, inboundRequest{
+		err := s.runner.Handle(ctx, cfg, inboundRequest{
 			ChannelID:   m.ChannelID,
 			TS:          m.TS,
 			ThreadTS:    m.ThreadTS,
@@ -283,11 +291,19 @@ func (s *supervisor) scan(ctx context.Context, host pluginsdk.Host, cfg *config)
 			Permalink:   m.Permalink,
 			Acknowledge: true,
 		})
+		if err != nil {
+			// Stop the batch here rather than skipping past the failure: the
+			// watermark is a single high-water mark, so advancing over a
+			// message that never became a task would drop the request
+			// permanently. The next scan retries from this point.
+			break
+		}
 		if compareTS(m.TS, marks[searchWatermarkKey]) > 0 {
 			marks[searchWatermarkKey] = m.TS
+			advanced = true
 		}
 	}
-	if len(matches) > 0 {
+	if advanced {
 		if err := writeWatermarks(ctx, host, marks); err != nil {
 			log.Printf("slack: persist watermarks: %v", err)
 		}
@@ -300,7 +316,7 @@ func (s *supervisor) scan(ctx context.Context, host pluginsdk.Host, cfg *config)
 func (s *supervisor) ensureProbed(ctx context.Context, cl *client, cfg *config, st *status) error {
 	fingerprint := credentialFingerprint(cfg)
 	s.mu.Lock()
-	fresh := s.active == fingerprint && time.Since(s.lastProbe) < probeInterval
+	fresh := s.probedFor == fingerprint && time.Since(s.lastProbe) < probeInterval
 	s.mu.Unlock()
 	if fresh && st.CheckedAt != "" {
 		return nil
@@ -311,7 +327,7 @@ func (s *supervisor) ensureProbed(ctx context.Context, cl *client, cfg *config, 
 	}
 	s.mu.Lock()
 	s.lastProbe = time.Now()
-	s.active = fingerprint
+	s.probedFor = fingerprint
 	s.mu.Unlock()
 
 	st.OK = res.OK

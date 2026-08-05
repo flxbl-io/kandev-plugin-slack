@@ -14,8 +14,10 @@ import (
 )
 
 // slackAPIBase is the single host for Slack's Web API. The same base serves
-// every workspace — the token scopes the request.
-const slackAPIBase = "https://slack.com/api"
+// every workspace — the token scopes the request. It is a var rather than a
+// const only so the end-to-end tests can point the whole plugin at a stub
+// Slack; nothing in production reassigns it.
+var slackAPIBase = "https://slack.com/api"
 
 const userAgent = "kandev-plugin-slack/0.1 (+https://github.com/kdlbs/kandev-plugin-slack)"
 
