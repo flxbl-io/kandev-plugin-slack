@@ -13,6 +13,11 @@ Kandev:         Filed this in Platform › Engineering › Backlog as
                 "Fix SSO login redirect loop on Safari". PLAT-482
 ```
 
+> The exchange above is what the plugin is built to do, written out rather
+> than screenshotted: no live Slack workspace has exercised it yet, and a
+> mocked-up screenshot would claim more than has been verified. The Kandev
+> side below is real.
+
 Two ways to trigger it:
 
 - **`@Kandev <what needs doing>`** in any channel the bot is in. Mention it
@@ -39,7 +44,16 @@ Two tokens, about two minutes.
 4. **Paste both** into Settings → Plugins → Slack, pick a triage agent, save.
 5. **Invite the bot** to the channels you want it to read: `/invite @Kandev`.
 
-The badge on the plugin page reads **Listening** once the WebSocket is open.
+![Settings → Plugins → Slack](https://raw.githubusercontent.com/kdlbs/kandev-plugin-slack/5599242e8ce50aa68fd7dc0f10025c33193148b0/docs/settings.png)
+
+The badge reads **Listening** once the WebSocket is open. Credentials are
+stored in Kandev's encrypted vault and masked on read; only the plugin
+subprocess ever sees them in cleartext.
+
+Both tokens come from the same Slack app but different pages, so swapping them
+is the easy mistake. The plugin says which one it got:
+
+![Token validation](https://raw.githubusercontent.com/kdlbs/kandev-plugin-slack/5599242e8ce50aa68fd7dc0f10025c33193148b0/docs/validation.png)
 
 ### Why Socket Mode
 
@@ -86,9 +100,6 @@ lose real-time events.
 | Start agent on the new task | Off by default; the task lands on the board. |
 | Fallback: session token / `d` cookie | Secret. Only for workspaces that forbid apps. |
 | Fallback: command prefix / channels / poll interval | Fallback only; ignored by the app path. |
-
-Credentials are stored in Kandev's encrypted vault and masked on read; only the
-plugin subprocess ever sees them in cleartext.
 
 ## How triage works
 
