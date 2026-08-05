@@ -1,0 +1,89 @@
+id: "kandev-plugin-slack"
+api_version: 1
+version: "0.1.1"
+display_name: "Slack"
+description: "Turn Slack messages into Kandev tasks. Post `!kandev <instruction>` in Slack and a utility agent triages it into the right workspace, workflow and column, then replies in-thread."
+author: "kandev"
+categories: ["connector", "automation"]
+repo_url: "https://github.com/kdlbs/kandev-plugin-slack"
+
+runtime:
+  type: binary
+  executables:
+    linux-amd64: "server/plugin-linux-amd64"
+    linux-arm64: "server/plugin-linux-arm64"
+    darwin-amd64: "server/plugin-darwin-amd64"
+    darwin-arm64: "server/plugin-darwin-arm64"
+    windows-amd64: "server/plugin-windows-amd64.exe"
+
+capabilities:
+  # The poll watermark (per-channel last-seen Slack ts) and the last probe
+  # result live in Host state so a restart resumes instead of re-triaging.
+  state: true
+  # Credentials arrive through config_schema secret fields; GetConfig hands
+  # the subprocess the cleartext values.
+  secrets: true
+  # Triage is one non-interactive completion per matched message.
+  agent_invoke: true
+  # The triage prompt is built from the real Kandev topology so the agent
+  # picks an existing workspace/workflow/column rather than inventing one.
+  api_read: ["workspaces", "workflows", "repositories"]
+  api_write: ["tasks"]
+
+webhooks:
+  - key: "status"
+    description: "Connection status, detected auth mode, and recent triage activity (UI relay, not an external webhook)"
+    method: "GET"
+  - key: "test"
+    description: "Probe the stored credentials with Slack auth.test (UI relay, not an external webhook)"
+    method: "POST"
+  - key: "scan"
+    description: "Run one Slack scan immediately instead of waiting for the next poll (UI relay, not an external webhook)"
+    method: "POST"
+
+config_schema:
+  type: object
+  properties:
+    slack_token:
+      type: string
+      secret: true
+      title: "Slack token"
+      description: "xoxp- user token (search:read, chat:write, reactions:write), xoxb- bot token (channels:history, chat:write, reactions:write), or xoxc- browser session token. The prefix selects the auth mode — see the plugin page."
+    slack_cookie:
+      type: string
+      secret: true
+      title: "Browser d cookie"
+      description: "Required only for an xoxc- token: the value of the `d` cookie from your logged-in Slack browser session. Ignored for xoxp-/xoxb- tokens."
+    reply_token:
+      type: string
+      secret: true
+      title: "Reply token (optional)"
+      description: "Optional xoxb- bot token used only to post the in-thread reply and the acknowledgement reaction, so replies come from your app instead of your own Slack account."
+    command_prefix:
+      type: string
+      default: "!kandev"
+      title: "Command prefix"
+      description: "Messages starting with this marker are triaged. Slash-command prefixes (/) cannot be used — Slack intercepts them."
+    channels:
+      type: string
+      title: "Channels"
+      description: "Comma-separated channel IDs (e.g. C0123ABCD,C0456EFGH). Required for xoxb- bot tokens, which cannot search; optional for xoxp-/xoxc-, where it narrows the search to these channels."
+    poll_interval_seconds:
+      type: integer
+      default: 30
+      title: "Poll interval (seconds)"
+      description: "How often to check Slack. Between 5 and 600."
+    start_agent:
+      type: boolean
+      default: false
+      title: "Start agent on the new task"
+      description: "Launch an agent on the task as soon as triage creates it, instead of leaving it queued on the board."
+    utility_agent:
+      type: string
+      format: utility-agent
+      title: "Triage agent"
+      description: "The utility agent that reads the Slack thread and decides which workspace, workflow and column the task belongs in."
+  required: ["slack_token", "utility_agent"]
+
+ui:
+  bundle: "/ui/bundle.js"

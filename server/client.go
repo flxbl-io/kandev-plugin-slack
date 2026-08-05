@@ -1,0 +1,496 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// slackAPIBase is the single host for Slack's Web API. The same base serves
+// every workspace — the token scopes the request.
+const slackAPIBase = "https://slack.com/api"
+
+const userAgent = "kandev-plugin-slack/0.1 (+https://github.com/kdlbs/kandev-plugin-slack)"
+
+// maxResponseBytes bounds a single Slack response read. Slack's own limits
+// are well under this; the cap exists so a proxy returning an unbounded body
+// cannot exhaust the plugin subprocess.
+const maxResponseBytes = 8 << 20
+
+// requestTimeout bounds one Slack call. Generous enough for search.messages
+// on a large workspace, short enough that a hung call cannot stall the poll
+// loop past its own interval.
+const requestTimeout = 30 * time.Second
+
+// message is the minimal shape extracted from Slack for both the search and
+// the thread fetch.
+type message struct {
+	TS        string `json:"ts"`
+	ThreadTS  string `json:"threadTs,omitempty"`
+	ChannelID string `json:"channelId"`
+	UserID    string `json:"userId,omitempty"`
+	UserName  string `json:"userName,omitempty"`
+	Text      string `json:"text"`
+	Permalink string `json:"permalink,omitempty"`
+}
+
+// sender renders the message author for the triage prompt and the reply.
+func (m message) sender() string {
+	switch {
+	case m.UserName != "":
+		return "@" + m.UserName
+	case m.UserID != "":
+		return "<@" + m.UserID + ">"
+	default:
+		return "the user"
+	}
+}
+
+// authResult is the outcome of an auth.test probe.
+type authResult struct {
+	OK          bool   `json:"ok"`
+	UserID      string `json:"userId,omitempty"`
+	TeamID      string `json:"teamId,omitempty"`
+	TeamName    string `json:"teamName,omitempty"`
+	URL         string `json:"url,omitempty"`
+	DisplayName string `json:"displayName,omitempty"`
+	Error       string `json:"error,omitempty"`
+}
+
+// apiError captures a Slack API failure. Slack answers 200 with
+// `{"ok": false, "error": "..."}` for nearly every failure mode, so
+// StatusCode is usually 200 and Message carries Slack's error string.
+type apiError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *apiError) Error() string {
+	return fmt.Sprintf("slack api: status %d: %s", e.StatusCode, e.Message)
+}
+
+// client speaks Slack's Web API with a bearer token and, in cookie mode, the
+// browser `d` cookie alongside it.
+type client struct {
+	http     *http.Client
+	endpoint string
+	token    string
+	cookie   string
+	// mode is carried only so a rejected call can name the remedy that fits
+	// the credential the operator actually pasted.
+	mode authMode
+}
+
+func newClient(token, cookie string) *client {
+	// A detection failure here is not actionable: loadConfig already rejected
+	// an unusable token before any client is built, and a caller that skips
+	// that path (the connection test on a half-filled form) still deserves
+	// Slack's own verdict rather than a second validation error.
+	mode, _ := detectAuthMode(token)
+	return &client{
+		http:     &http.Client{Timeout: requestTimeout},
+		endpoint: slackAPIBase,
+		token:    token,
+		cookie:   cookie,
+		mode:     mode,
+	}
+}
+
+// envelope is the `{ok, error}` shape every Slack endpoint returns.
+type envelope struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+// post sends a form-encoded POST to /api/<method> and decodes the envelope.
+// Slack expects form encoding, not JSON, for effectively every endpoint the
+// plugin uses.
+func (c *client) post(ctx context.Context, method string, params url.Values, out any) error {
+	if c.token == "" {
+		return errNotConfigured
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.endpoint+"/"+method, strings.NewReader(params.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	if c.cookie != "" {
+		req.Header.Set("Cookie", "d="+c.cookie)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return &apiError{StatusCode: resp.StatusCode, Message: summarizeBody(raw)}
+	}
+	var env envelope
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return &apiError{StatusCode: resp.StatusCode, Message: "invalid Slack response: " + err.Error()}
+	}
+	if !env.OK {
+		return &apiError{StatusCode: resp.StatusCode, Message: env.Error}
+	}
+	if out == nil {
+		return nil
+	}
+	return json.Unmarshal(raw, out)
+}
+
+func summarizeBody(raw []byte) string {
+	const maxMsg = 500
+	s := strings.TrimSpace(string(raw))
+	if s == "" {
+		return "(empty body)"
+	}
+	if len(s) > maxMsg {
+		return s[:maxMsg] + "…"
+	}
+	return s
+}
+
+// --- auth.test ---
+
+type authTestResponse struct {
+	envelope
+	URL    string `json:"url"`
+	Team   string `json:"team"`
+	User   string `json:"user"`
+	TeamID string `json:"team_id"`
+	UserID string `json:"user_id"`
+}
+
+// AuthTest is the cheapest call that confirms the credentials still work and
+// returns the authenticated identity. A Slack-reported failure comes back as
+// an authResult with OK=false rather than an error, so the caller can persist
+// the reason; only transport failures surface as errors.
+func (c *client) AuthTest(ctx context.Context) (*authResult, error) {
+	var resp authTestResponse
+	if err := c.post(ctx, "auth.test", url.Values{}, &resp); err != nil {
+		var apiErr *apiError
+		if errors.As(err, &apiErr) {
+			return &authResult{OK: false, Error: explainSlackError(apiErr.Message, c.mode)}, nil
+		}
+		return &authResult{OK: false, Error: err.Error()}, nil
+	}
+	return &authResult{
+		OK:          true,
+		UserID:      resp.UserID,
+		TeamID:      resp.TeamID,
+		TeamName:    resp.Team,
+		URL:         resp.URL,
+		DisplayName: resp.User,
+	}, nil
+}
+
+// explainSlackError expands the Slack error codes an operator is most likely
+// to hit while setting this plugin up. Slack's raw codes ("invalid_auth") give
+// no hint about which of the three credential shapes is wrong, and the right
+// remedy differs per mode — a stale `d` cookie is the usual cause for xoxc-
+// and impossible for xoxb-/xoxp-, so the advice is mode-specific rather than
+// listing every mode's fix and leaving the operator to pick.
+func explainSlackError(code string, mode authMode) string {
+	switch code {
+	case "invalid_auth":
+		return "invalid_auth — " + invalidAuthRemedy(mode)
+	case "not_authed":
+		return "not_authed — no credential reached Slack. Check the token field is actually saved."
+	case "token_revoked":
+		return "token_revoked — the token was revoked in Slack. " + reissueRemedy(mode)
+	case "account_inactive":
+		return "account_inactive — the authenticating Slack account is deactivated."
+	case "missing_scope", "not_allowed_token_type":
+		return code + " — the token lacks a scope this plugin needs. " + scopeRemedy(mode)
+	case "ratelimited":
+		return "ratelimited — Slack is throttling this workspace. Raise the poll interval."
+	default:
+		return code
+	}
+}
+
+func invalidAuthRemedy(mode authMode) string {
+	switch mode {
+	case authModeCookie:
+		return "the credentials were rejected. This usually means the `d` cookie is stale — re-copy the token and the cookie from the same logged-in browser session."
+	case authModeBot:
+		return "the bot token was rejected. Copy the Bot User OAuth token from your Slack app's OAuth & Permissions page, and reinstall the app if you changed its scopes."
+	default:
+		return "the user token was rejected. Copy the User OAuth token (not the bot token) from your Slack app's OAuth & Permissions page."
+	}
+}
+
+func reissueRemedy(mode authMode) string {
+	if mode == authModeCookie {
+		return "Sign in to Slack again and re-copy the token and `d` cookie."
+	}
+	return "Reinstall the Slack app and copy the new token."
+}
+
+func scopeRemedy(mode authMode) string {
+	if mode == authModeBot {
+		return "Bot tokens need channels:history (and groups:history for private channels), chat:write and reactions:write. Note that bot tokens can never call search.messages — that is why bot mode reads channel history instead."
+	}
+	return "User tokens need search:read, chat:write and reactions:write."
+}
+
+// --- search.messages ---
+
+type searchMessagesResponse struct {
+	envelope
+	Messages struct {
+		Matches []searchMatch `json:"matches"`
+	} `json:"messages"`
+}
+
+type searchMatch struct {
+	TS        string `json:"ts"`
+	Text      string `json:"text"`
+	User      string `json:"user"`
+	Username  string `json:"username"`
+	Permalink string `json:"permalink"`
+	Channel   struct {
+		ID string `json:"id"`
+	} `json:"channel"`
+	ThreadTS string `json:"thread_ts,omitempty"`
+}
+
+// searchPageSize is how many matches one search.messages call returns.
+// Matches older than the watermark are discarded locally, so this only needs
+// to cover the burst that can land inside one poll interval.
+const searchPageSize = 30
+
+// SearchMessages runs Slack's search.messages. Only user-scoped tokens
+// (xoxp-, xoxc-) may call it; bot tokens get not_allowed_token_type.
+func (c *client) SearchMessages(ctx context.Context, query string) ([]message, error) {
+	params := url.Values{}
+	params.Set("query", query)
+	params.Set("count", strconv.Itoa(searchPageSize))
+	// Newest first; the watermark in the trigger discards anything already
+	// processed, so a descending page is the cheapest way to stay current.
+	params.Set("sort", "timestamp")
+	params.Set("sort_dir", "desc")
+	var resp searchMessagesResponse
+	if err := c.post(ctx, "search.messages", params, &resp); err != nil {
+		return nil, err
+	}
+	out := make([]message, 0, len(resp.Messages.Matches))
+	for _, m := range resp.Messages.Matches {
+		out = append(out, message{
+			TS:        m.TS,
+			ThreadTS:  m.ThreadTS,
+			ChannelID: m.Channel.ID,
+			UserID:    m.User,
+			UserName:  m.Username,
+			Text:      m.Text,
+			Permalink: m.Permalink,
+		})
+	}
+	return out, nil
+}
+
+// --- conversations.history / conversations.replies ---
+
+type conversationsResponse struct {
+	envelope
+	Messages []conversationMessage `json:"messages"`
+}
+
+type conversationMessage struct {
+	TS       string `json:"ts"`
+	ThreadTS string `json:"thread_ts,omitempty"`
+	User     string `json:"user"`
+	Username string `json:"username"`
+	Text     string `json:"text"`
+	BotID    string `json:"bot_id,omitempty"`
+	Subtype  string `json:"subtype,omitempty"`
+}
+
+// historyPageSize bounds one conversations.history page in bot mode. A
+// channel quieter than this per poll interval is fully covered; a busier one
+// advances the watermark and catches up on the next tick.
+const historyPageSize = 100
+
+// ChannelHistory returns messages posted after `oldest` in one channel. This
+// is the bot-token trigger: an xoxb- token cannot search, but it can read the
+// history of any channel it has been invited to.
+//
+// Slack treats `oldest` as inclusive, so the caller's watermark message comes
+// back on every poll; it is filtered out here rather than in the trigger so
+// the "strictly newer" contract belongs to the one function that knows about
+// Slack's inclusivity quirk.
+func (c *client) ChannelHistory(ctx context.Context, channelID, oldest string) ([]message, error) {
+	if channelID == "" {
+		return nil, errors.New("channel id required")
+	}
+	params := url.Values{}
+	params.Set("channel", channelID)
+	params.Set("limit", strconv.Itoa(historyPageSize))
+	if oldest != "" {
+		params.Set("oldest", oldest)
+	}
+	var resp conversationsResponse
+	if err := c.post(ctx, "conversations.history", params, &resp); err != nil {
+		return nil, err
+	}
+	out := make([]message, 0, len(resp.Messages))
+	for _, m := range resp.Messages {
+		// Skip joins/leaves/topic changes and anything this or another bot
+		// posted — replying to our own reply would loop.
+		if m.Subtype != "" || m.BotID != "" {
+			continue
+		}
+		if oldest != "" && compareTS(m.TS, oldest) <= 0 {
+			continue
+		}
+		out = append(out, message{
+			TS:        m.TS,
+			ThreadTS:  m.ThreadTS,
+			ChannelID: channelID,
+			UserID:    m.User,
+			UserName:  m.Username,
+			Text:      m.Text,
+		})
+	}
+	return out, nil
+}
+
+// ThreadContext returns the conversation surrounding a triggering message.
+// When threadTS is empty the message is not in a thread, and the fallback
+// reads exactly the triggering message: pinning both ends of the window to
+// triggerTS keeps unrelated channel activity between detection and
+// processing out of the agent's context.
+func (c *client) ThreadContext(ctx context.Context, channelID, threadTS, triggerTS string) ([]message, error) {
+	if channelID == "" {
+		return nil, errors.New("channel id required")
+	}
+	if threadTS == "" {
+		return c.historyAt(ctx, channelID, triggerTS)
+	}
+	params := url.Values{}
+	params.Set("channel", channelID)
+	params.Set("ts", threadTS)
+	params.Set("limit", strconv.Itoa(historyPageSize))
+	var resp conversationsResponse
+	if err := c.post(ctx, "conversations.replies", params, &resp); err != nil {
+		return nil, err
+	}
+	return toMessages(channelID, resp.Messages), nil
+}
+
+func (c *client) historyAt(ctx context.Context, channelID, ts string) ([]message, error) {
+	if ts == "" {
+		return nil, nil
+	}
+	params := url.Values{}
+	params.Set("channel", channelID)
+	params.Set("oldest", ts)
+	params.Set("latest", ts)
+	params.Set("inclusive", "true")
+	params.Set("limit", "1")
+	var resp conversationsResponse
+	if err := c.post(ctx, "conversations.history", params, &resp); err != nil {
+		return nil, err
+	}
+	return toMessages(channelID, resp.Messages), nil
+}
+
+func toMessages(channelID string, in []conversationMessage) []message {
+	out := make([]message, 0, len(in))
+	for _, m := range in {
+		out = append(out, message{
+			TS:        m.TS,
+			ThreadTS:  m.ThreadTS,
+			ChannelID: channelID,
+			UserID:    m.User,
+			UserName:  m.Username,
+			Text:      m.Text,
+		})
+	}
+	return out
+}
+
+// --- chat.getPermalink ---
+
+type permalinkResponse struct {
+	envelope
+	Permalink string `json:"permalink"`
+}
+
+// Permalink resolves a message's canonical Slack URL so the created task can
+// link back to the conversation that produced it.
+func (c *client) Permalink(ctx context.Context, channelID, ts string) (string, error) {
+	params := url.Values{}
+	params.Set("channel", channelID)
+	params.Set("message_ts", ts)
+	var resp permalinkResponse
+	if err := c.post(ctx, "chat.getPermalink", params, &resp); err != nil {
+		return "", err
+	}
+	return resp.Permalink, nil
+}
+
+// --- chat.postMessage / reactions.add ---
+
+// PostMessage posts a reply. A non-empty threadTS keeps it in-thread.
+func (c *client) PostMessage(ctx context.Context, channelID, threadTS, text string) error {
+	params := url.Values{}
+	params.Set("channel", channelID)
+	params.Set("text", text)
+	if threadTS != "" {
+		params.Set("thread_ts", threadTS)
+	}
+	return c.post(ctx, "chat.postMessage", params, nil)
+}
+
+// AddReaction adds an emoji reaction, given the bare name (no colons).
+// Slack's `already_reacted` is swallowed so the caller can react
+// idempotently across restarts and watermark retries.
+func (c *client) AddReaction(ctx context.Context, channelID, ts, name string) error {
+	params := url.Values{}
+	params.Set("channel", channelID)
+	params.Set("timestamp", ts)
+	params.Set("name", name)
+	err := c.post(ctx, "reactions.add", params, nil)
+	if err == nil {
+		return nil
+	}
+	var apiErr *apiError
+	if errors.As(err, &apiErr) && apiErr.Message == "already_reacted" {
+		return nil
+	}
+	return err
+}
+
+// compareTS orders Slack timestamps. They are fixed-format decimal strings
+// ("1714659000.000100"), so lexicographic order matches chronological order
+// and avoids a float parse that could lose the microsecond suffix.
+func compareTS(a, b string) int {
+	switch {
+	case a == b:
+		return 0
+	case a == "":
+		return -1
+	case b == "":
+		return 1
+	case a < b:
+		return -1
+	default:
+		return 1
+	}
+}
