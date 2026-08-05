@@ -89,11 +89,13 @@ type client struct {
 }
 
 func newClient(token, cookie string) *client {
-	// A detection failure here is not actionable: loadConfig already rejected
-	// an unusable token before any client is built, and a caller that skips
-	// that path (the connection test on a half-filled form) still deserves
-	// Slack's own verdict rather than a second validation error.
-	mode, _ := detectAuthMode(token)
+	// The mode is inferred from the token rather than passed in so every call
+	// site gets remedy text that matches the credential actually in use, even
+	// the connection test on a half-filled form.
+	mode := authModeApp
+	if strings.HasPrefix(token, sessionTokenPrefix) {
+		mode = authModeSession
+	}
 	return &client{
 		http:     &http.Client{Timeout: requestTimeout},
 		endpoint: slackAPIBase,
@@ -225,28 +227,24 @@ func explainSlackError(code string, mode authMode) string {
 }
 
 func invalidAuthRemedy(mode authMode) string {
-	switch mode {
-	case authModeCookie:
+	if mode == authModeSession {
 		return "the credentials were rejected. This usually means the `d` cookie is stale — re-copy the token and the cookie from the same logged-in browser session."
-	case authModeBot:
-		return "the bot token was rejected. Copy the Bot User OAuth token from your Slack app's OAuth & Permissions page, and reinstall the app if you changed its scopes."
-	default:
-		return "the user token was rejected. Copy the User OAuth token (not the bot token) from your Slack app's OAuth & Permissions page."
 	}
+	return "the token was rejected. Reinstall the app in Slack and copy the current Bot User OAuth Token from OAuth & Permissions."
 }
 
 func reissueRemedy(mode authMode) string {
-	if mode == authModeCookie {
+	if mode == authModeSession {
 		return "Sign in to Slack again and re-copy the token and `d` cookie."
 	}
 	return "Reinstall the Slack app and copy the new token."
 }
 
 func scopeRemedy(mode authMode) string {
-	if mode == authModeBot {
-		return "Bot tokens need channels:history (and groups:history for private channels), chat:write and reactions:write. Note that bot tokens can never call search.messages — that is why bot mode reads channel history instead."
+	if mode == authModeSession {
+		return "The browser session must belong to an account that can see the channels you want triaged."
 	}
-	return "User tokens need search:read, chat:write and reactions:write."
+	return "Re-apply the app manifest so the bot has app_mentions:read, channels:history, groups:history, chat:write, reactions:write and commands, then reinstall the app — scope changes only take effect on reinstall."
 }
 
 // --- search.messages ---

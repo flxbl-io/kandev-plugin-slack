@@ -17,7 +17,7 @@ import (
 type slackPlugin struct {
 	pluginsdk.UnimplementedPlugin
 
-	trigger *trigger
+	supervisor *supervisor
 
 	startOnce sync.Once
 	// runCtx bounds the polling loop. Kandev owns the subprocess lifecycle
@@ -28,18 +28,18 @@ type slackPlugin struct {
 
 func newSlackPlugin(ctx context.Context) *slackPlugin {
 	p := &slackPlugin{runCtx: ctx}
-	p.trigger = newTrigger(func() pluginsdk.Host { return p.Host() })
+	p.supervisor = newSupervisor(func() pluginsdk.Host { return p.Host() })
 	return p
 }
 
-// SetHost starts the polling loop once the broker connection to Kandev is
+// SetHost starts the source supervisor once the broker connection to Kandev is
 // live. Serve injects the Host from a background goroutine after startup, so
 // this is the earliest point at which any Host call can succeed — starting
 // the loop in main would just spin against a nil Host.
 func (p *slackPlugin) SetHost(h pluginsdk.Host) {
 	p.UnimplementedPlugin.SetHost(h)
 	p.startOnce.Do(func() {
-		go p.trigger.Run(p.runCtx)
+		go p.supervisor.Run(p.runCtx)
 	})
 }
 
@@ -62,7 +62,7 @@ func (p *slackPlugin) HandleWebhook(ctx context.Context, req *pluginsdk.WebhookR
 		if !isPost(req) {
 			return methodNotAllowed()
 		}
-		p.trigger.ScanNow()
+		p.supervisor.ScanNow()
 		return jsonResponse(http.StatusAccepted, map[string]any{"scheduled": true})
 	default:
 		return jsonResponse(http.StatusNotFound, map[string]any{"error": "unknown webhook"})
@@ -92,11 +92,13 @@ func (p *slackPlugin) handleStatus(ctx context.Context) (*pluginsdk.WebhookRespo
 		"recent":     st.Recent,
 	}
 	if cfg, err := p.currentConfig(ctx, host); err == nil {
-		payload["commandPrefix"] = cfg.CommandPrefix
-		payload["channels"] = cfg.Channels
-		payload["pollIntervalSeconds"] = int(cfg.PollInterval.Seconds())
 		payload["startAgent"] = cfg.StartAgent
-		payload["searchCapable"] = cfg.Mode.searchCapable()
+		payload["realtime"] = cfg.Mode.realtime()
+		if !cfg.Mode.realtime() {
+			payload["commandPrefix"] = cfg.CommandPrefix
+			payload["channels"] = cfg.Channels
+			payload["pollIntervalSeconds"] = int(cfg.PollInterval.Seconds())
+		}
 	} else if !st.Configured {
 		payload["error"] = configErrorMessage(err)
 	}
@@ -119,7 +121,8 @@ func (p *slackPlugin) handleTest(ctx context.Context) (*pluginsdk.WebhookRespons
 			"error": configErrorMessage(err),
 		})
 	}
-	res, err := newClient(cfg.Token, cfg.Cookie).AuthTest(ctx)
+	token, cookie := cfg.WebCredentials()
+	res, err := newClient(token, cookie).AuthTest(ctx)
 	if err != nil {
 		return jsonResponse(http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 	}
@@ -149,7 +152,7 @@ func configErrorMessage(err error) string {
 		return ""
 	}
 	if strings.Contains(err.Error(), errNotConfigured.Error()) {
-		return "Add a Slack token and pick a triage agent in Settings > Plugins."
+		return "Add your Slack app tokens and pick a triage agent in Settings > Plugins."
 	}
 	return err.Error()
 }

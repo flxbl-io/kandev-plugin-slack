@@ -1,0 +1,55 @@
+# Paste this into Slack: api.slack.com/apps → Create New App → From a manifest.
+#
+# socket_mode_enabled means Slack pushes events down a WebSocket instead of
+# POSTing to a request URL, so this imports cleanly with no public HTTPS
+# endpoint — which is the point, since Kandev usually runs on localhost.
+#
+# After creating the app:
+#   1. Basic Information → App-Level Tokens → Generate, scope `connections:write`
+#      → this is the `xapp-` token.
+#   2. Install to Workspace → OAuth & Permissions → Bot User OAuth Token
+#      → this is the `xoxb-` token.
+#   3. Invite the bot to the channels you want it to read: /invite @Kandev
+#
+# Scope changes only take effect on reinstall — if you edit this manifest
+# later, reinstall the app afterwards.
+display_information:
+  name: Kandev
+  description: Turn Slack conversations into Kandev tasks.
+  background_color: "#1f1d2b"
+
+features:
+  bot_user:
+    display_name: Kandev
+    always_online: false
+  slash_commands:
+    - command: /kandev
+      description: Create a Kandev task from this conversation
+      usage_hint: "[what needs doing]"
+      should_escape: false
+
+oauth_config:
+  scopes:
+    bot:
+      # Receive @Kandev mentions.
+      - app_mentions:read
+      # Read the surrounding thread for context. groups: covers private
+      # channels; drop it if the bot only ever works in public ones.
+      - channels:history
+      - groups:history
+      # Post the triage reply.
+      - chat:write
+      # Add the :eyes: acknowledgement while triage runs.
+      - reactions:write
+      # Serve /kandev.
+      - commands
+
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention
+  interactivity:
+    is_enabled: true
+  socket_mode_enabled: true
+  org_deploy_enabled: false
+  token_rotation_enabled: false

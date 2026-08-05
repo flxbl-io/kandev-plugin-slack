@@ -12,13 +12,11 @@
 
 const PLUGIN_ID = "kandev-plugin-slack";
 
-// Slack docs the operator needs while filling in the form above this card.
-const SCOPE_HELP = {
-  user_token: "Needs the search:read, chat:write and reactions:write user scopes.",
-  bot_token:
-    "Needs the channels:history (or groups:history), chat:write and reactions:write bot scopes, and the bot must be invited to every channel listed.",
-  cookie:
-    "Uses your browser session. Slack does not support this mode — it stops working when you sign out, and the d cookie rotates regularly.",
+// Slack context the operator needs while filling in the form above this card.
+const MODE_HELP = {
+  app: "Events arrive over Slack's Socket Mode WebSocket — nothing is polled, and no public URL is needed. Invite the bot to a channel, then mention @Kandev or run /kandev.",
+  session:
+    "Fallback for workspaces that forbid app installs. It uses your browser session, which Slack does not support: it stops working when you sign out, the d cookie rotates regularly, and it polls instead of receiving events.",
 };
 
 function makeStatusCard(host) {
@@ -57,7 +55,9 @@ function makeStatusCard(host) {
       return h(Badge, { variant: "outline" }, "Not configured");
     }
     if (data.ok) {
-      return h(Badge, { variant: "default" }, "Connected");
+      // In Socket Mode "connected" means the WebSocket is actually open, so
+      // say so rather than implying only that a credential validated.
+      return h(Badge, { variant: "default" }, data.realtime ? "Listening" : "Connected");
     }
     return h(Badge, { variant: "destructive" }, "Not connected");
   }
@@ -75,12 +75,15 @@ function makeStatusCard(host) {
     if (!data || !data.configured) return null;
     const bits = [];
     if (data.modeLabel) bits.push(data.modeLabel);
-    if (data.commandPrefix) bits.push("Trigger: " + data.commandPrefix);
-    if (data.pollIntervalSeconds) bits.push("Every " + data.pollIntervalSeconds + "s");
-    if (Array.isArray(data.channels) && data.channels.length > 0) {
-      bits.push(data.channels.length === 1 ? "1 channel" : data.channels.length + " channels");
-    } else if (data.searchCapable) {
-      bits.push("All channels you can search");
+    if (data.realtime) {
+      bits.push("Trigger: @Kandev or /kandev");
+      bits.push("Real-time");
+    } else {
+      if (data.commandPrefix) bits.push("Trigger: " + data.commandPrefix);
+      if (data.pollIntervalSeconds) bits.push("Polls every " + data.pollIntervalSeconds + "s");
+      if (Array.isArray(data.channels) && data.channels.length > 0) {
+        bits.push(data.channels.length === 1 ? "1 channel" : data.channels.length + " channels");
+      }
     }
     if (data.startAgent) bits.push("Starts an agent");
     return h(
@@ -91,16 +94,34 @@ function makeStatusCard(host) {
   }
 
   function ScopeHint({ data }) {
-    const help = data && data.mode ? SCOPE_HELP[data.mode] : null;
+    const help = data && data.mode ? MODE_HELP[data.mode] : null;
     if (!help) return null;
     return h("div", { style: { fontSize: "0.8125rem", color: "var(--muted-foreground)" } }, help);
+  }
+
+  // Setup is the one thing the schema-driven form cannot explain: where the
+  // two tokens come from. Shown only until the app path is working.
+  function SetupHint({ data }) {
+    if (data && data.realtime && data.ok) return null;
+    if (data && data.mode === "session") return null;
+    return h(
+      "div",
+      { style: { fontSize: "0.8125rem", color: "var(--muted-foreground)" } },
+      "Create the Slack app from ",
+      h(
+        "a",
+        { href: "https://api.slack.com/apps", target: "_blank", rel: "noreferrer noopener" },
+        "api.slack.com/apps",
+      ),
+      " → Create New App → From a manifest, paste the plugin's slack-app-manifest.yaml, then copy the app-level token (Basic Information) and the bot token (OAuth & Permissions) into the fields below.",
+    );
   }
 
   function Timestamps({ data }) {
     if (!data || !data.configured) return null;
     const bits = [];
-    if (data.checkedAt) bits.push("Checked " + formatWhen(data.checkedAt));
-    if (data.scannedAt) bits.push("Scanned " + formatWhen(data.scannedAt));
+    if (data.checkedAt) bits.push((data.realtime ? "Connected " : "Checked ") + formatWhen(data.checkedAt));
+    if (data.scannedAt && !data.realtime) bits.push("Scanned " + formatWhen(data.scannedAt));
     bits.push(
       data.triaged === 1 ? "1 task created" : (data.triaged || 0) + " tasks created",
     );
@@ -159,7 +180,7 @@ function makeStatusCard(host) {
 
   // Actions owns the two relay buttons. `busy` is a single string rather than
   // one flag per button so a second click cannot fire while either is running.
-  function Actions({ reload }) {
+  function Actions({ reload, realtime }) {
     const [busy, setBusy] = React.useState(null);
     const [result, setResult] = React.useState(null);
 
@@ -201,11 +222,13 @@ function makeStatusCard(host) {
           { variant: "outline", size: "sm", disabled: busy !== null, onClick: () => run("test") },
           busy === "test" ? "Testing…" : "Test connection",
         ),
-        h(
-          Button,
-          { variant: "outline", size: "sm", disabled: busy !== null, onClick: () => run("scan") },
-          busy === "scan" ? "Scanning…" : "Scan now",
-        ),
+        realtime
+          ? null
+          : h(
+              Button,
+              { variant: "outline", size: "sm", disabled: busy !== null, onClick: () => run("scan") },
+              busy === "scan" ? "Scanning…" : "Scan now",
+            ),
       ),
       result
         ? h(
@@ -244,8 +267,9 @@ function makeStatusCard(host) {
           : null,
         h(MetaRow, { data }),
         h(ScopeHint, { data }),
+        h(SetupHint, { data }),
         h(Timestamps, { data }),
-        h(Actions, { reload }),
+        h(Actions, { reload, realtime: Boolean(data && data.realtime) }),
         h(Activity, { data }),
       ),
     );

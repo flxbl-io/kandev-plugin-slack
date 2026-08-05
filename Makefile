@@ -1,7 +1,7 @@
 .PHONY: build run test fmt vet package package-host clean
 
 BIN := bin/kandev-plugin-slack
-VERSION := 0.1.1
+VERSION := 0.2.1
 STAGE := .build/stage
 PKG_OUT := kandev-plugin-slack-$(VERSION).tar.gz
 
@@ -34,6 +34,7 @@ package:
 	mkdir -p $(STAGE)/server $(STAGE)/ui
 	cp manifest.yaml $(STAGE)/manifest.yaml
 	cp README.md $(STAGE)/README.md
+	cp slack-app-manifest.yaml $(STAGE)/slack-app-manifest.yaml
 	cp ui/bundle.js $(STAGE)/ui/bundle.js
 	GOOS=linux   GOARCH=amd64 go build -o $(STAGE)/server/plugin-linux-amd64       ./server
 	GOOS=linux   GOARCH=arm64 go build -o $(STAGE)/server/plugin-linux-arm64       ./server
@@ -50,6 +51,7 @@ package-host:
 	mkdir -p $(STAGE)/server $(STAGE)/ui
 	cp manifest.yaml $(STAGE)/manifest.yaml
 	cp README.md $(STAGE)/README.md
+	cp slack-app-manifest.yaml $(STAGE)/slack-app-manifest.yaml
 	cp ui/bundle.js $(STAGE)/ui/bundle.js
 	go build -o $(STAGE)/server/plugin-$$(go env GOOS)-$$(go env GOARCH)$$(go env GOEXE) ./server
 	go run github.com/kandev/kandev/cmd/plugin-pack -dir $(STAGE) -out $(PKG_OUT) -platform-only

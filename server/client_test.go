@@ -206,57 +206,46 @@ func TestCompareTSOrdersSlackTimestamps(t *testing.T) {
 }
 
 // The remedy for a rejected credential differs per mode: a stale `d` cookie is
-// the usual cause for xoxc- and impossible for xoxb-/xoxp-, so mode-blind
-// advice sends two of the three modes chasing a field they must leave empty.
+// the usual cause for the browser fallback and impossible for a Slack app, so
+// mode-blind advice sends one of the two paths chasing a field it must leave
+// empty.
 func TestExplainInvalidAuthIsModeSpecific(t *testing.T) {
-	cases := []struct {
-		mode     authMode
-		want     string
-		unwanted string
-	}{
-		{mode: authModeCookie, want: "`d` cookie is stale"},
-		{mode: authModeBot, want: "Bot User OAuth token", unwanted: "cookie"},
-		{mode: authModeUser, want: "User OAuth token", unwanted: "cookie"},
+	session := explainSlackError("invalid_auth", authModeSession)
+	if !strings.Contains(session, "`d` cookie is stale") {
+		t.Fatalf("session remedy = %q, want the cookie advice", session)
 	}
-	for _, tc := range cases {
-		t.Run(string(tc.mode), func(t *testing.T) {
-			got := explainSlackError("invalid_auth", tc.mode)
-			if !strings.Contains(got, tc.want) {
-				t.Fatalf("explainSlackError(invalid_auth, %s) = %q, want it to mention %q", tc.mode, got, tc.want)
-			}
-			if tc.unwanted != "" && strings.Contains(got, tc.unwanted) {
-				t.Fatalf("explainSlackError(invalid_auth, %s) = %q, must not mention %q", tc.mode, got, tc.unwanted)
-			}
-		})
+	app := explainSlackError("invalid_auth", authModeApp)
+	if !strings.Contains(app, "Bot User OAuth Token") {
+		t.Fatalf("app remedy = %q, want the reinstall advice", app)
+	}
+	if strings.Contains(app, "cookie") {
+		t.Fatalf("app remedy = %q, must not mention a cookie", app)
 	}
 }
 
-// Bot tokens are the one mode that can never search, so the scope advice has
-// to say so rather than listing search:read as a fix.
-func TestExplainScopeErrorTellsBotsSearchIsImpossible(t *testing.T) {
-	got := explainSlackError("not_allowed_token_type", authModeBot)
-	if !strings.Contains(got, "never call search.messages") {
-		t.Fatalf("explainSlackError = %q, want the bot search limitation", got)
-	}
-	if strings.Contains(explainSlackError("missing_scope", authModeUser), "never call search.messages") {
-		t.Fatal("user tokens can search; the bot limitation must not be shown for them")
+// Slack only applies scope changes on reinstall, which is the single most
+// common reason a freshly-edited manifest still fails.
+func TestExplainScopeErrorTellsAppsToReinstall(t *testing.T) {
+	got := explainSlackError("missing_scope", authModeApp)
+	if !strings.Contains(got, "reinstall") {
+		t.Fatalf("explainSlackError = %q, want the reinstall requirement", got)
 	}
 }
 
-// The client derives its mode from the token so callers never have to pass it.
+// The client derives its mode from the token so callers never pass it.
 func TestClientCarriesTheDetectedMode(t *testing.T) {
-	if newClient("xoxb-abc", "").mode != authModeBot {
-		t.Fatal("client did not detect a bot token")
+	if newClient("xoxc-abc", "d").mode != authModeSession {
+		t.Fatal("a session token must select the fallback remedies")
 	}
-	if newClient("garbage", "").mode != "" {
-		t.Fatal("an unrecognized token must leave the mode empty rather than guessing")
+	if newClient("xoxb-abc", "").mode != authModeApp {
+		t.Fatal("a bot token must select the app remedies")
 	}
 }
 
 // An unmapped Slack code must reach the operator verbatim rather than being
 // swallowed into a generic message.
 func TestExplainUnknownCodePassesThrough(t *testing.T) {
-	if got := explainSlackError("channel_not_found", authModeBot); got != "channel_not_found" {
+	if got := explainSlackError("channel_not_found", authModeApp); got != "channel_not_found" {
 		t.Fatalf("explainSlackError = %q, want the raw code", got)
 	}
 }

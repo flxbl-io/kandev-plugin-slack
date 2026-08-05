@@ -1,8 +1,8 @@
 id: "kandev-plugin-slack"
 api_version: 1
-version: "0.1.1"
+version: "0.2.1"
 display_name: "Slack"
-description: "Turn Slack messages into Kandev tasks. Post `!kandev <instruction>` in Slack and a utility agent triages it into the right workspace, workflow and column, then replies in-thread."
+description: "Turn Slack conversations into Kandev tasks. Mention @Kandev or run /kandev and a utility agent triages the thread into the right workspace, workflow and column, then replies in-thread."
 author: "kandev"
 categories: ["connector", "automation"]
 repo_url: "https://github.com/kdlbs/kandev-plugin-slack"
@@ -38,52 +38,57 @@ webhooks:
     description: "Probe the stored credentials with Slack auth.test (UI relay, not an external webhook)"
     method: "POST"
   - key: "scan"
-    description: "Run one Slack scan immediately instead of waiting for the next poll (UI relay, not an external webhook)"
+    description: "Run one fallback-mode scan immediately instead of waiting for the next poll (UI relay, not an external webhook)"
     method: "POST"
 
 config_schema:
   type: object
   properties:
-    slack_token:
+    app_token:
       type: string
       secret: true
-      title: "Slack token"
-      description: "xoxp- user token (search:read, chat:write, reactions:write), xoxb- bot token (channels:history, chat:write, reactions:write), or xoxc- browser session token. The prefix selects the auth mode — see the plugin page."
-    slack_cookie:
+      title: "App-level token"
+      description: "xapp- token from Basic Information > App-Level Tokens, with the connections:write scope. Opens the Socket Mode connection so Slack can push events without Kandev needing a public URL."
+    bot_token:
       type: string
       secret: true
-      title: "Browser d cookie"
-      description: "Required only for an xoxc- token: the value of the `d` cookie from your logged-in Slack browser session. Ignored for xoxp-/xoxb- tokens."
-    reply_token:
-      type: string
-      secret: true
-      title: "Reply token (optional)"
-      description: "Optional xoxb- bot token used only to post the in-thread reply and the acknowledgement reaction, so replies come from your app instead of your own Slack account."
-    command_prefix:
-      type: string
-      default: "!kandev"
-      title: "Command prefix"
-      description: "Messages starting with this marker are triaged. Slash-command prefixes (/) cannot be used — Slack intercepts them."
-    channels:
-      type: string
-      title: "Channels"
-      description: "Comma-separated channel IDs (e.g. C0123ABCD,C0456EFGH). Required for xoxb- bot tokens, which cannot search; optional for xoxp-/xoxc-, where it narrows the search to these channels."
-    poll_interval_seconds:
-      type: integer
-      default: 30
-      title: "Poll interval (seconds)"
-      description: "How often to check Slack. Between 5 and 600."
-    start_agent:
-      type: boolean
-      default: false
-      title: "Start agent on the new task"
-      description: "Launch an agent on the task as soon as triage creates it, instead of leaving it queued on the board."
+      title: "Bot token"
+      description: "xoxb- Bot User OAuth Token from OAuth & Permissions, after installing the app. This is the identity replies come from."
     utility_agent:
       type: string
       format: utility-agent
       title: "Triage agent"
       description: "The utility agent that reads the Slack thread and decides which workspace, workflow and column the task belongs in."
-  required: ["slack_token", "utility_agent"]
+    start_agent:
+      type: boolean
+      default: false
+      title: "Start agent on the new task"
+      description: "Launch an agent on the task as soon as triage creates it, instead of leaving it queued on the board."
+    session_token:
+      type: string
+      secret: true
+      title: "Fallback: browser session token"
+      description: "Only if your workspace forbids app installs. The xoxc- token from a logged-in Slack tab. Unofficial and unsupported by Slack; polls instead of receiving events. Leave empty when using a Slack app."
+    session_cookie:
+      type: string
+      secret: true
+      title: "Fallback: browser d cookie"
+      description: "The `d` cookie from the same Slack tab as the session token. Required only for the fallback."
+    command_prefix:
+      type: string
+      default: "!kandev"
+      title: "Fallback: command prefix"
+      description: "Fallback only. Messages starting with this marker are triaged. A Slack app is addressed with @Kandev or /kandev instead, so this is ignored."
+    channels:
+      type: string
+      title: "Fallback: channels"
+      description: "Fallback only. Comma-separated channel IDs to narrow the search. A Slack app receives events for every channel it is invited to."
+    poll_interval_seconds:
+      type: integer
+      default: 30
+      title: "Fallback: poll interval (seconds)"
+      description: "Fallback only, between 5 and 600. A Slack app is event-driven and never polls."
+  required: ["utility_agent"]
 
 ui:
   bundle: "/ui/bundle.js"

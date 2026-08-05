@@ -13,77 +13,70 @@ import (
 	"github.com/kandev/kandev/pkg/pluginsdk"
 )
 
-// acknowledgeReaction is added to a matched message before the agent runs, so
-// the requester sees their message was picked up during the seconds the
-// triage completion takes.
-const acknowledgeReaction = "eyes"
-
-// probeInterval is how often the stored credentials are re-validated,
-// matching the 90s cadence Kandev's built-in integrations use for their
-// auth-health polling.
+// probeInterval is how often stored credentials are re-validated in the
+// session fallback. Socket Mode needs no probe of its own: the connection
+// state is the health signal.
 const probeInterval = 90 * time.Second
 
-// baseTick is how often the loop wakes to check whether a scan is due. The
-// configured poll interval is the real cadence; this only bounds how quickly
-// a configuration change or a manual scan is noticed.
+// baseTick is how often the supervisor re-reads config and, in fallback mode,
+// checks whether a poll is due.
 const baseTick = 5 * time.Second
 
-// trigger owns the polling loop that turns matched Slack messages into
-// Kandev tasks.
-type trigger struct {
-	// host is resolved lazily: Serve injects the Host from a background
-	// goroutine after the broker connection is up, so it can still be nil
-	// when the loop starts.
-	host func() pluginsdk.Host
-
-	// scanMu serializes scans so a manual "Scan now" cannot interleave with
-	// the timer-driven pass and double-triage the same message.
-	scanMu sync.Mutex
+// supervisor owns whichever source the current configuration selects, and
+// swaps it when the configuration changes. A config update restarts the plugin
+// subprocess, so in practice this starts once — but a restart is not
+// guaranteed for every path, and a source that outlived its credentials would
+// keep talking to Slack with them.
+type supervisor struct {
+	host   func() pluginsdk.Host
+	runner *runner
 
 	scanNow chan struct{}
 
-	mu        sync.Mutex
-	lastScan  time.Time
-	lastProbe time.Time
-	// probedFor fingerprints the credentials the last probe validated, so
-	// pasting a new token re-probes immediately instead of waiting out
-	// probeInterval with a stale "connected" banner.
-	probedFor string
+	mu sync.Mutex
+	// active fingerprints the config the current source was started for.
+	active     string
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
+	lastScan   time.Time
+	lastProbe  time.Time
+	socketUp   bool
+	socketErr  string
+	socketSeen bool
 }
 
-func newTrigger(host func() pluginsdk.Host) *trigger {
-	return &trigger{host: host, scanNow: make(chan struct{}, 1)}
+func newSupervisor(host func() pluginsdk.Host) *supervisor {
+	return &supervisor{host: host, runner: newRunner(host), scanNow: make(chan struct{}, 1)}
 }
 
-// Run drives the loop until ctx is cancelled.
-func (t *trigger) Run(ctx context.Context) {
+// Run drives the supervisor until ctx is cancelled.
+func (s *supervisor) Run(ctx context.Context) {
 	ticker := time.NewTicker(baseTick)
 	defer ticker.Stop()
+	defer s.stopSource()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.scanNow:
-			t.runScan(ctx, true)
+		case <-s.scanNow:
+			s.tick(ctx, true)
 		case <-ticker.C:
-			t.runScan(ctx, false)
+			s.tick(ctx, false)
 		}
 	}
 }
 
 // ScanNow requests an immediate pass. Non-blocking: a pending request already
 // covers the caller's intent.
-func (t *trigger) ScanNow() {
+func (s *supervisor) ScanNow() {
 	select {
-	case t.scanNow <- struct{}{}:
+	case s.scanNow <- struct{}{}:
 	default:
 	}
 }
 
-// runScan performs one pass when it is due, logging rather than propagating
-// failures — the loop must survive a Slack outage or a half-finished config.
-func (t *trigger) runScan(ctx context.Context, force bool) {
-	host := t.host()
+func (s *supervisor) tick(ctx context.Context, force bool) {
+	host := s.host()
 	if host == nil {
 		return
 	}
@@ -94,62 +87,168 @@ func (t *trigger) runScan(ctx context.Context, force bool) {
 	}
 	cfg, err := loadConfig(raw)
 	if err != nil {
-		t.recordUnconfigured(ctx, host, err)
+		s.stopSource()
+		s.recordUnconfigured(ctx, host, err)
 		return
 	}
-	if !force && !t.due(cfg.PollInterval) {
+	if cfg.Mode == authModeApp {
+		s.ensureSocket(ctx, cfg)
+		s.publishSocketStatus(ctx, host, cfg)
 		return
 	}
-	t.markScanned()
-	t.scanMu.Lock()
-	defer t.scanMu.Unlock()
-	if err := t.scan(ctx, host, cfg); err != nil && !errors.Is(err, context.Canceled) {
-		log.Printf("slack: scan failed: %v", err)
+	s.stopSource()
+	s.pollOnce(ctx, host, cfg, force)
+}
+
+// ensureSocket starts the Socket Mode listener, restarting it when the
+// credentials change.
+func (s *supervisor) ensureSocket(ctx context.Context, cfg *config) {
+	fingerprint := credentialFingerprint(cfg)
+	s.mu.Lock()
+	if s.active == fingerprint && s.cancel != nil {
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
+
+	s.stopSource()
+
+	// The bot's own user id is needed to strip `<@BOT>` from a mention. A
+	// probe failure is not fatal: without the id the mention text keeps its
+	// prefix, which the agent tolerates, and the connection error surfaces on
+	// the plugin page anyway.
+	botUserID := ""
+	if res, err := newClient(cfg.BotToken, "").AuthTest(ctx); err == nil && res.OK {
+		botUserID = res.UserID
+	}
+
+	sourceCtx, cancel := context.WithCancel(ctx)
+	listener := &socketListener{
+		appToken:  cfg.AppToken,
+		botUserID: botUserID,
+		handle: func(reqCtx context.Context, req inboundRequest) {
+			s.runner.Handle(reqCtx, cfg, req)
+		},
+		onState: s.noteSocketState,
+	}
+	s.mu.Lock()
+	s.active = fingerprint
+	s.cancel = cancel
+	s.mu.Unlock()
+
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		listener.Run(sourceCtx)
+	}()
+}
+
+func (s *supervisor) noteSocketState(connected bool, err error) {
+	s.mu.Lock()
+	s.socketUp = connected
+	s.socketSeen = true
+	if err != nil {
+		s.socketErr = err.Error()
+	} else if connected {
+		s.socketErr = ""
+	}
+	s.mu.Unlock()
+}
+
+func (s *supervisor) stopSource() {
+	s.mu.Lock()
+	cancel := s.cancel
+	s.cancel = nil
+	s.active = ""
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+		s.wg.Wait()
 	}
 }
 
-// recordUnconfigured persists the reason the plugin is idle so the operator
-// sees it on the plugin page rather than only in the backend log.
-func (t *trigger) recordUnconfigured(ctx context.Context, host pluginsdk.Host, cause error) {
-	st := readStatus(ctx, host)
-	message := ""
-	if !errors.Is(cause, errNotConfigured) {
-		message = cause.Error()
-	}
-	if !st.Configured && st.Error == message {
+// publishSocketStatus mirrors the live connection state into Host state so the
+// plugin page shows whether events are actually arriving.
+func (s *supervisor) publishSocketStatus(ctx context.Context, host pluginsdk.Host, cfg *config) {
+	s.mu.Lock()
+	up, seen, socketErr := s.socketUp, s.socketSeen, s.socketErr
+	s.mu.Unlock()
+	if !seen {
 		return
 	}
-	st.Configured = false
-	st.OK = false
-	st.Error = message
+	st := readStatus(ctx, host)
+	if st.Configured && st.OK == up && st.Error == socketErr && st.Mode == cfg.Mode.String() {
+		return
+	}
+	st.Configured = true
+	st.Mode = cfg.Mode.String()
+	st.ModeLabel = cfg.Mode.Label()
+	st.OK = up
+	st.Error = socketErr
 	st.CheckedAt = nowRFC3339()
 	if err := writeStatus(ctx, host, st); err != nil {
 		log.Printf("slack: persist status: %v", err)
 	}
 }
 
-func (t *trigger) due(interval time.Duration) bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.lastScan.IsZero() || time.Since(t.lastScan) >= interval
+// recordUnconfigured persists the reason the plugin is idle so the operator
+// sees it on the plugin page rather than only in the backend log.
+func (s *supervisor) recordUnconfigured(ctx context.Context, host pluginsdk.Host, cause error) {
+	message := ""
+	if !errors.Is(cause, errNotConfigured) {
+		message = cause.Error()
+	}
+	st := readStatus(ctx, host)
+	if !st.Configured && st.Error == message {
+		return
+	}
+	st.Configured = false
+	st.OK = false
+	st.Error = message
+	st.Mode = ""
+	st.ModeLabel = ""
+	st.CheckedAt = nowRFC3339()
+	if err := writeStatus(ctx, host, st); err != nil {
+		log.Printf("slack: persist status: %v", err)
+	}
 }
 
-func (t *trigger) markScanned() {
-	t.mu.Lock()
-	t.lastScan = time.Now()
-	t.mu.Unlock()
+// --- session fallback: polling ---
+
+// pollOnce runs the fallback scan when its cadence has elapsed.
+func (s *supervisor) pollOnce(ctx context.Context, host pluginsdk.Host, cfg *config, force bool) {
+	if !force && !s.due(cfg.PollInterval) {
+		return
+	}
+	s.markScanned()
+	if err := s.scan(ctx, host, cfg); err != nil && !errors.Is(err, context.Canceled) {
+		log.Printf("slack: scan failed: %v", err)
+	}
 }
 
-// scan runs one full pass: validate credentials if due, collect fresh
-// matches, triage each, then advance the watermarks.
-func (t *trigger) scan(ctx context.Context, host pluginsdk.Host, cfg *config) error {
-	cl := newClient(cfg.Token, cfg.Cookie)
+func (s *supervisor) due(interval time.Duration) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastScan.IsZero() || time.Since(s.lastScan) >= interval
+}
+
+func (s *supervisor) markScanned() {
+	s.mu.Lock()
+	s.lastScan = time.Now()
+	s.mu.Unlock()
+}
+
+// scan validates credentials if due, collects fresh matches, triages each,
+// then advances the watermark.
+func (s *supervisor) scan(ctx context.Context, host pluginsdk.Host, cfg *config) error {
+	token, cookie := cfg.WebCredentials()
+	cl := newClient(token, cookie)
 	st := readStatus(ctx, host)
 	st.Configured = true
 	st.Mode = cfg.Mode.String()
 	st.ModeLabel = cfg.Mode.Label()
 
-	if err := t.ensureProbed(ctx, cl, cfg, &st); err != nil {
+	if err := s.ensureProbed(ctx, cl, cfg, &st); err != nil {
 		return err
 	}
 	if !st.OK {
@@ -166,23 +265,43 @@ func (t *trigger) scan(ctx context.Context, host pluginsdk.Host, cfg *config) er
 		return err
 	}
 	st.ScannedAt = nowRFC3339()
-	if len(matches) == 0 {
-		return writeStatus(ctx, host, st)
+	if err := writeStatus(ctx, host, st); err != nil {
+		return err
 	}
-	t.process(ctx, host, cl, cfg, matches, marks, &st)
-	if err := writeWatermarks(ctx, host, marks); err != nil {
-		log.Printf("slack: persist watermarks: %v", err)
+	for _, m := range matches {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		s.runner.Handle(ctx, cfg, inboundRequest{
+			ChannelID:   m.ChannelID,
+			TS:          m.TS,
+			ThreadTS:    m.ThreadTS,
+			UserID:      m.UserID,
+			UserName:    m.UserName,
+			Text:        m.Text,
+			Instruction: stripCommandPrefix(m.Text, cfg.CommandPrefix),
+			Permalink:   m.Permalink,
+			Acknowledge: true,
+		})
+		if compareTS(m.TS, marks[searchWatermarkKey]) > 0 {
+			marks[searchWatermarkKey] = m.TS
+		}
 	}
-	return writeStatus(ctx, host, st)
+	if len(matches) > 0 {
+		if err := writeWatermarks(ctx, host, marks); err != nil {
+			log.Printf("slack: persist watermarks: %v", err)
+		}
+	}
+	return nil
 }
 
-// ensureProbed refreshes the auth-health fields when the probe is stale or
-// the credentials changed.
-func (t *trigger) ensureProbed(ctx context.Context, cl *client, cfg *config, st *status) error {
+// ensureProbed refreshes the auth-health fields when the probe is stale or the
+// credentials changed.
+func (s *supervisor) ensureProbed(ctx context.Context, cl *client, cfg *config, st *status) error {
 	fingerprint := credentialFingerprint(cfg)
-	t.mu.Lock()
-	fresh := t.probedFor == fingerprint && time.Since(t.lastProbe) < probeInterval
-	t.mu.Unlock()
+	s.mu.Lock()
+	fresh := s.active == fingerprint && time.Since(s.lastProbe) < probeInterval
+	s.mu.Unlock()
 	if fresh && st.CheckedAt != "" {
 		return nil
 	}
@@ -190,10 +309,10 @@ func (t *trigger) ensureProbed(ctx context.Context, cl *client, cfg *config, st 
 	if err != nil {
 		return err
 	}
-	t.mu.Lock()
-	t.lastProbe = time.Now()
-	t.probedFor = fingerprint
-	t.mu.Unlock()
+	s.mu.Lock()
+	s.lastProbe = time.Now()
+	s.active = fingerprint
+	s.mu.Unlock()
 
 	st.OK = res.OK
 	st.Error = res.Error
@@ -207,11 +326,15 @@ func (t *trigger) ensureProbed(ctx context.Context, cl *client, cfg *config, st 
 	return nil
 }
 
-// credentialFingerprint identifies a credential set without retaining it.
-// Only lengths and the last few characters are used: enough to notice a
-// rotation, never enough to reconstruct a secret if it reaches a log.
+// credentialFingerprint identifies a credential set without retaining it. Only
+// lengths and the last few characters are used: enough to notice a rotation,
+// never enough to reconstruct a secret if it reaches a log.
 func credentialFingerprint(cfg *config) string {
-	return fmt.Sprintf("%d:%s|%d|%s", len(cfg.Token), tail(cfg.Token), len(cfg.Cookie), tail(cfg.ReplyToken))
+	return fmt.Sprintf("%s|%d:%s|%d:%s|%d:%s",
+		cfg.Mode,
+		len(cfg.AppToken), tail(cfg.AppToken),
+		len(cfg.BotToken), tail(cfg.BotToken),
+		len(cfg.SessionToken), tail(cfg.SessionToken))
 }
 
 func tail(s string) string {
@@ -222,43 +345,14 @@ func tail(s string) string {
 	return s[len(s)-n:]
 }
 
-// collect gathers messages newer than the watermark, using whichever trigger
-// strategy the auth mode supports.
+// collect gathers session-fallback messages newer than the watermark.
 func collect(ctx context.Context, cl *client, cfg *config, userID string, marks map[string]string) ([]message, error) {
-	var found []message
-	var err error
-	if cfg.Mode.searchCapable() {
-		found, err = collectBySearch(ctx, cl, cfg, userID, marks[searchWatermarkKey])
-	} else {
-		found, err = collectByHistory(ctx, cl, cfg, marks)
-	}
-	if err != nil {
-		return nil, err
-	}
-	fresh := make([]message, 0, len(found))
-	for _, m := range found {
-		if !hasCommandPrefix(m.Text, cfg.CommandPrefix) {
-			continue
-		}
-		fresh = append(fresh, m)
-	}
-	sort.SliceStable(fresh, func(i, j int) bool {
-		return compareTS(fresh[i].TS, fresh[j].TS) < 0
-	})
-	return fresh, nil
-}
-
-// collectBySearch is the user-token / cookie path. It scopes the search to
-// the authenticated user's own messages, matching the semantics of the
-// integration this plugin replaces: you triage your own requests, not
-// everyone else's.
-func collectBySearch(ctx context.Context, cl *client, cfg *config, userID, watermark string) ([]message, error) {
 	if userID == "" {
 		return nil, errors.New("no authenticated Slack user id yet — the credential probe has not succeeded")
 	}
-	queries := searchQueries(cfg, userID)
-	var out []message
-	for _, q := range queries {
+	watermark := marks[searchWatermarkKey]
+	var found []message
+	for _, q := range searchQueries(cfg, userID) {
 		matches, err := cl.SearchMessages(ctx, q)
 		if err != nil {
 			return nil, fmt.Errorf("search Slack: %w", err)
@@ -267,10 +361,16 @@ func collectBySearch(ctx context.Context, cl *client, cfg *config, userID, water
 			if compareTS(m.TS, watermark) <= 0 {
 				continue
 			}
-			out = append(out, m)
+			if !hasCommandPrefix(m.Text, cfg.CommandPrefix) {
+				continue
+			}
+			found = append(found, m)
 		}
 	}
-	return out, nil
+	sort.SliceStable(found, func(i, j int) bool {
+		return compareTS(found[i].TS, found[j].TS) < 0
+	})
+	return found, nil
 }
 
 // searchQueries builds one query per configured channel, or a single
@@ -288,160 +388,9 @@ func searchQueries(cfg *config, userID string) []string {
 	return out
 }
 
-// collectByHistory is the bot-token path: read each configured channel's
-// history past its own watermark. Unlike search mode this picks up requests
-// from anyone in the channel, since a bot has no "own messages" to filter to.
-func collectByHistory(ctx context.Context, cl *client, cfg *config, marks map[string]string) ([]message, error) {
-	var out []message
-	for _, ch := range cfg.Channels {
-		msgs, err := cl.ChannelHistory(ctx, ch, marks[ch])
-		if err != nil {
-			return nil, fmt.Errorf("read history for %s: %w", ch, err)
-		}
-		out = append(out, msgs...)
-	}
-	return out, nil
-}
-
-// process triages each match in order, advancing the watermark only past
-// messages that finished. A recoverable failure stops the batch so the next
-// pass retries from the same point rather than skipping the request.
-func (t *trigger) process(
-	ctx context.Context, host pluginsdk.Host, cl *client, cfg *config,
-	matches []message, marks map[string]string, st *status,
-) {
-	replyClient := cl
-	if token, cookie := cfg.ReplyCredentials(); token != cfg.Token || cookie != cfg.Cookie {
-		replyClient = newClient(token, cookie)
-	}
-	topology, err := readTopology(ctx, host)
-	if err != nil {
-		st.Error = err.Error()
-		return
-	}
-	for _, m := range matches {
-		if ctx.Err() != nil {
-			return
-		}
-		entry, err := t.triage(ctx, host, cl, replyClient, cfg, topology, m)
-		if err != nil {
-			st.note(recentEntry{At: nowRFC3339(), Text: firstLine(m.Text), Error: err.Error()})
-			st.Error = err.Error()
-			log.Printf("slack: triage %s failed: %v", m.TS, err)
-			return
-		}
-		st.Error = ""
-		st.Triaged++
-		st.note(entry)
-		advance(marks, cfg, m)
-	}
-}
-
-// advance moves the watermark this message belongs to. Search mode keeps a
-// single cross-channel watermark; bot mode keeps one per channel, because
-// each channel's history is read independently.
-func advance(marks map[string]string, cfg *config, m message) {
-	key := searchWatermarkKey
-	if !cfg.Mode.searchCapable() {
-		key = m.ChannelID
-	}
-	if compareTS(m.TS, marks[key]) > 0 {
-		marks[key] = m.TS
-	}
-}
-
-// triage runs the full per-message flow: acknowledge, gather context, ask the
-// agent, create the task, reply in-thread.
-func (t *trigger) triage(
-	ctx context.Context, host pluginsdk.Host, read, write *client,
-	cfg *config, topology []workspaceTopology, m message,
-) (recentEntry, error) {
-	if err := write.AddReaction(ctx, m.ChannelID, m.TS, acknowledgeReaction); err != nil {
-		// A missing reactions:write scope should not block the actual work.
-		log.Printf("slack: acknowledge reaction failed: %v", err)
-	}
-	thread, err := read.ThreadContext(ctx, m.ChannelID, m.ThreadTS, m.TS)
-	if err != nil {
-		return recentEntry{}, fmt.Errorf("fetch thread: %w", err)
-	}
-	permalink := m.Permalink
-	if permalink == "" {
-		permalink, _ = read.Permalink(ctx, m.ChannelID, m.TS)
-	}
-	instruction := stripCommandPrefix(m.Text, cfg.CommandPrefix)
-	if instruction == "" {
-		return recentEntry{}, errors.New("message carried the prefix but no instruction")
-	}
-	prompt, err := buildTriagePrompt(topology, m, instruction, permalink, thread)
-	if err != nil {
-		return recentEntry{}, err
-	}
-	response, err := host.InvokeUtilityAgent(ctx, prompt)
-	if err != nil {
-		return recentEntry{}, fmt.Errorf("triage agent: %w", err)
-	}
-	decision, err := parseDecision(response)
-	if err != nil {
-		return recentEntry{}, err
-	}
-	task, err := createTask(ctx, host, cfg, decision, topology, m, permalink)
-	if err != nil {
-		return recentEntry{}, err
-	}
-	t.reply(ctx, write, m, decision, task)
-	return recentEntry{
-		At:        nowRFC3339(),
-		Text:      firstLine(instruction),
-		TaskTitle: task.Title,
-		TaskID:    task.ID,
-		Permalink: permalink,
-	}, nil
-}
-
-func createTask(
-	ctx context.Context, host pluginsdk.Host, cfg *config,
-	decision *triageDecision, topology []workspaceTopology, m message, permalink string,
-) (*pluginsdk.Task, error) {
-	workspaceID, workflowID, stepID := decision.resolve(topology)
-	task, err := host.Tasks().Create(ctx, pluginsdk.CreateTaskInput{
-		WorkspaceID:    workspaceID,
-		WorkflowID:     workflowID,
-		WorkflowStepID: stepID,
-		Title:          decision.Title,
-		Description:    buildDescription(decision, m, permalink),
-		StartAgent:     cfg.StartAgent,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create task: %w", err)
-	}
-	return task, nil
-}
-
-// reply posts the agent's summary back into the thread. A failure here is
-// logged but not returned: the task exists, and failing the message would
-// re-triage it into a duplicate on the next pass.
-func (t *trigger) reply(ctx context.Context, write *client, m message, decision *triageDecision, task *pluginsdk.Task) {
-	threadTS := m.ThreadTS
-	if threadTS == "" {
-		threadTS = m.TS
-	}
-	body := strings.TrimSpace(decision.Reply)
-	if body == "" {
-		body = "Created a Kandev task for this."
-	}
-	if task != nil && task.Identifier != "" {
-		body += fmt.Sprintf("\n\n*%s* — %s", task.Identifier, task.Title)
-	} else if task != nil {
-		body += "\n\n*" + task.Title + "*"
-	}
-	if err := write.PostMessage(ctx, m.ChannelID, threadTS, body); err != nil {
-		log.Printf("slack: reply failed: %v", err)
-	}
-}
-
-// hasCommandPrefix reports whether text opens with the command marker. The
-// leading "> " strip handles Slack rendering a quoted message, and the
-// delimiter check stops "!kandevish" from matching "!kandev".
+// hasCommandPrefix reports whether text opens with the fallback command
+// marker. The leading "> " strip handles Slack rendering a quoted message, and
+// the delimiter check stops "!kandevish" from matching "!kandev".
 func hasCommandPrefix(text, prefix string) bool {
 	t := normalizeLeading(text)
 	if !strings.HasPrefix(strings.ToLower(t), strings.ToLower(prefix)) {
@@ -459,8 +408,8 @@ func hasCommandPrefix(text, prefix string) bool {
 	}
 }
 
-// stripCommandPrefix returns the instruction with the marker and any
-// separator punctuation removed.
+// stripCommandPrefix returns the instruction with the marker and any separator
+// punctuation removed.
 func stripCommandPrefix(text, prefix string) string {
 	t := normalizeLeading(text)
 	if len(t) >= len(prefix) && strings.EqualFold(t[:len(prefix)], prefix) {
@@ -473,17 +422,4 @@ func normalizeLeading(text string) string {
 	t := strings.TrimSpace(text)
 	t = strings.TrimPrefix(t, "> ")
 	return strings.TrimSpace(t)
-}
-
-// firstLine truncates a message for the activity feed.
-func firstLine(text string) string {
-	const maxLen = 120
-	line := strings.TrimSpace(text)
-	if idx := strings.IndexByte(line, '\n'); idx >= 0 {
-		line = line[:idx]
-	}
-	if len(line) > maxLen {
-		return line[:maxLen] + "…"
-	}
-	return line
 }

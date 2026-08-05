@@ -1,70 +1,90 @@
 # kandev-plugin-slack
 
-Turn Slack messages into Kandev tasks.
+Turn Slack conversations into Kandev tasks.
 
-Post `!kandev <instruction>` in Slack and the plugin picks it up, reads the
-surrounding thread, asks your triage agent which workspace, workflow and
-column the work belongs in, creates the task, and replies in-thread with what
-it did.
+Mention the bot or run the slash command, and the plugin reads the surrounding
+thread, asks your triage agent which workspace, workflow and column the work
+belongs in, creates the task, and replies in-thread.
 
 ```
-you (in #eng):  !kandev the safari login redirect loops for SSO users
+you (in #eng):  @Kandev the safari login redirect loops for SSO users
                 :eyes:
-kandev:         Filed this in Platform › Engineering › Backlog as
+Kandev:         Filed this in Platform › Engineering › Backlog as
                 "Fix SSO login redirect loop on Safari". PLAT-482
 ```
 
-This plugin replaces the Slack integration that used to ship inside Kandev
-itself, so it can move at its own pace.
+Two ways to trigger it:
 
-## Install
+- **`@Kandev <what needs doing>`** in any channel the bot is in.
+- **`/kandev <what needs doing>`** anywhere, including channels the bot is not
+  a member of.
 
-Settings → Plugins → install `kandev-plugin-slack-<version>.tar.gz`, then fill
-in Settings → Plugins → Slack.
+## Setup
 
-## Choosing a token
+Two tokens, about two minutes.
 
-The plugin reads the token's prefix to decide how to talk to Slack. There is
-no separate mode picker — paste the credential you have.
+1. **Create the app.** Go to [api.slack.com/apps](https://api.slack.com/apps) →
+   **Create New App** → **From a manifest**, pick your workspace, and paste
+   [`slack-app-manifest.yaml`](slack-app-manifest.yaml) from this repo. It
+   declares the scopes, the `/kandev` command, the `app_mention` subscription,
+   and Socket Mode.
+2. **App-level token.** Basic Information → App-Level Tokens → **Generate**,
+   with the `connections:write` scope. That is the `xapp-…` token.
+3. **Install and copy the bot token.** **Install to Workspace**, then OAuth &
+   Permissions → **Bot User OAuth Token**. That is the `xoxb-…` token.
+4. **Paste both** into Settings → Plugins → Slack, pick a triage agent, save.
+5. **Invite the bot** to the channels you want it to read: `/invite @Kandev`.
 
-| Token | Mode | How requests are found | Notes |
-| --- | --- | --- | --- |
-| `xoxp-…` | User token | `search.messages` for **your own** `!kandev` messages | The supported way to get parity with the old built-in integration. Scopes: `search:read`, `chat:write`, `reactions:write`. |
-| `xoxb-…` | Bot token | `conversations.history` on the channels you list | Bot tokens **cannot** search — Slack only exposes `search.messages` to user tokens. Picks up `!kandev` from **anyone** in those channels. Scopes: `channels:history` (and/or `groups:history`), `chat:write`, `reactions:write`. Invite the bot to each channel. |
-| `xoxc-…` + `d` cookie | Browser session | `search.messages`, same as a user token | Unofficial and unsupported by Slack: it is the credential pair your browser uses. No app install needed, but it breaks when you sign out and the `d` cookie rotates regularly. |
+The badge on the plugin page reads **Listening** once the WebSocket is open.
 
-`xoxe-` (refresh) and `xapp-` (Socket Mode) tokens are rejected with a message
-pointing at the right one — both are easy to copy by mistake from the same
-Slack app page.
+### Why Socket Mode
 
-### Getting an `xoxp-` user token
+Kandev usually runs on localhost, and the ordinary Events API needs a public
+HTTPS request URL that Slack can POST to. [Socket
+Mode](https://docs.slack.dev/apis/events-api/using-socket-mode/) exists for
+exactly this: the app opens a WebSocket to Slack and events are pushed down it,
+so nothing has to be publicly reachable and nothing has to be polled.
 
-Create a Slack app, add `search:read`, `chat:write` and `reactions:write`
-under **User Token Scopes**, install it to your workspace, and copy the *User*
-OAuth token.
+The trade-off is that Socket Mode apps cannot be listed in the public Slack
+Marketplace — irrelevant here, since each install is your own app in your own
+workspace.
 
-### Getting the browser session pair
+There is no "Add to Slack" button because [OAuth
+v2](https://docs.slack.dev/authentication/installing-with-oauth/) requires a
+public HTTPS redirect URL to receive the authorization code, which a
+self-hosted install does not have. Creating your own app from the manifest is
+the standard alternative, and it keeps the tokens in your workspace rather than
+routing an install through someone else's server.
 
-In a logged-in Slack tab: the token is the `xoxc-…` value in
-`localStorage.localConfig_v2` (under `teams.<id>.token`), and the cookie is
-the `d` cookie's value in Application → Cookies. Both must come from the same
-session.
+## Fallback: browser session
+
+Some workspaces forbid app installs outright. For those, leave the app fields
+empty and fill in the two **Fallback** fields instead: the `xoxc-…` token and
+the `d` cookie from a logged-in Slack tab (the token is in
+`localStorage.localConfig_v2` under `teams.<id>.token`; the cookie is in
+Application → Cookies). Both must come from the same session.
+
+This mode is unofficial and unsupported by Slack. It cannot receive events, so
+it polls `search.messages` for your own messages starting with `!kandev`, and
+it breaks when you sign out or when the `d` cookie rotates. Prefer the app.
+
+If both paths are filled in, the app wins — silently dropping to a polling
+fallback because a stale cookie was still saved would be a confusing way to
+lose real-time events.
 
 ## Settings
 
 | Field | Notes |
 | --- | --- |
-| Slack token | Secret. Selects the mode, see above. |
-| Browser `d` cookie | Secret. Required for `xoxc-` only; rejected for the others so a stale paste cannot go unnoticed. |
-| Reply token | Secret, optional `xoxb-`. Posts the reply and the :eyes: acknowledgement as your app instead of as you. |
-| Command prefix | Default `!kandev`. Cannot start with `/` — Slack intercepts slash commands before they become messages. |
-| Channels | Comma-separated channel **IDs**. Required for `xoxb-`; for `xoxp-`/`xoxc-` it narrows the search. |
-| Poll interval | 5–600s, default 30s. |
-| Start agent on the new task | Off by default; the task lands on the board instead. |
+| App-level token | Secret. `xapp-`, scope `connections:write`. |
+| Bot token | Secret. `xoxb-`, from OAuth & Permissions after install. |
 | Triage agent | Which utility agent makes the decision. |
+| Start agent on the new task | Off by default; the task lands on the board. |
+| Fallback: session token / `d` cookie | Secret. Only for workspaces that forbid apps. |
+| Fallback: command prefix / channels / poll interval | Fallback only; ignored by the app path. |
 
-Credentials are stored in Kandev's encrypted vault and are masked on read;
-only the plugin subprocess ever sees them in cleartext.
+Credentials are stored in Kandev's encrypted vault and masked on read; only the
+plugin subprocess ever sees them in cleartext.
 
 ## How triage works
 
@@ -74,19 +94,20 @@ the plugin does the tool work itself:
 1. Read the workspaces, workflows, columns and repositories you have.
 2. Send the agent the Slack thread plus that topology, and ask for one JSON
    decision.
-3. Validate the answer against the real topology — a hallucinated id falls
-   back to the first workspace rather than dropping the request — and create
-   the task through the Host API.
-4. Post the agent's `reply` in-thread, with the task identifier appended.
+3. Validate the answer against the real topology — a hallucinated id falls back
+   to the first workspace rather than dropping the request — and create the task
+   through the Host API.
+4. Post the agent's reply in-thread, with the task identifier appended.
 
-A message is only marked processed once its task exists, so a Slack outage or
-a failed completion retries on the next poll instead of silently swallowing
-the request. The watermark lives in Host state, so restarts resume rather than
-re-triaging every open request.
+Slack redelivers any Socket Mode envelope it does not see acknowledged within
+three seconds, so envelopes are acknowledged before triage starts and requests
+are deduplicated by channel, timestamp and instruction. Slack also cycles
+connections deliberately; a `disconnect` frame is treated as routine and
+redialled without backoff.
 
-**Known gap:** the Host task-creation API has no repository field yet, so
-triaged tasks are created without a repository attached even though the agent
-is shown which repositories each workspace has.
+**Known gap:** the Host task-creation API has no repository field, so triaged
+tasks are created without a repository attached even though the agent is shown
+which repositories each workspace has.
 
 ## Developing against the SDK
 
