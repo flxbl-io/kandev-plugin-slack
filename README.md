@@ -133,6 +133,13 @@ make package-host  # local platform only — the fast loop
 make package       # all five platforms declared in manifest.yaml
 ```
 
+CI mirrors these on every pull request (`ci.yml` also enforces `go mod tidy`
+and `gofmt`; `build.yml` packages all five platforms). Releases are cut by
+running the **release** workflow from Actions on `master`: it calculates the
+next version, rewrites `manifest.yaml`/`Makefile`/`README.md`, updates the
+changelog, tags, and publishes `kandev-plugin-slack-<version>.tar.gz` with its
+`checksums.txt` to a GitHub Release.
+
 Kandev refuses to reinstall the same id and version. Uninstall first while
 iterating — the version is a release number, not an iteration counter, and
 nothing here has been released yet:
