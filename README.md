@@ -127,6 +127,11 @@ make package-host  # local platform only — the fast loop
 make package       # all five platforms declared in manifest.yaml
 ```
 
-Kandev refuses to reinstall the same id and version, so bump `version` in
-`manifest.yaml` (and `VERSION` in the Makefile) between iterations, or
-uninstall first.
+Kandev refuses to reinstall the same id and version. Uninstall first while
+iterating — the version is a release number, not an iteration counter, and
+nothing here has been released yet:
+
+```bash
+curl -X DELETE localhost:<port>/api/plugins/kandev-plugin-slack
+curl -F package=@kandev-plugin-slack-0.1.0.tar.gz localhost:<port>/api/plugins/install
+```
