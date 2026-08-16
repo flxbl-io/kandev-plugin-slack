@@ -140,13 +140,13 @@ resolves it from a sibling checkout of the Kandev monorepo:
 ```bash
 make test          # go test ./server
 make vet
-make package-host  # local platform only — the fast loop
-make package       # all five platforms declared in manifest.yaml
+make package-host verify-package-host  # local platform only — the fast loop
+make package verify-package            # all five manifest platforms
 ```
 
 CI mirrors these on every pull request (`ci.yml` also enforces `go mod tidy`
-and `gofmt`; `build.yml` packages all five platforms). Releases are cut by
-running the **release** workflow from Actions on `master`: it calculates the
+and `gofmt`; `build.yml` packages and verifies all five platforms). Releases
+are cut by running the **release** workflow from Actions on `master`: it calculates the
 next version, rewrites `manifest.yaml`/`Makefile`/`README.md`, updates the
 changelog, tags, and publishes `kandev-plugin-slack-<version>.tar.gz` with its
 `checksums.txt` to a GitHub Release.
