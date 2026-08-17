@@ -1,12 +1,16 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/xml"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+const officialMarketplaceIconSHA256 = "3a67c3dcc2a1655d9f3ea1051817c4c8849d802383e45dd6cec1b910ff874922"
 
 func TestManifestIncludesPackagedMarketplaceIcon(t *testing.T) {
 	contents, err := os.ReadFile("../manifest.yaml")
@@ -37,6 +41,9 @@ func manifestIconPath(manifest string) string {
 
 func assertMarketplaceSVG(t *testing.T, icon []byte) {
 	t.Helper()
+	if got := fmt.Sprintf("%x", sha256.Sum256(icon)); got != officialMarketplaceIconSHA256 {
+		t.Fatalf("marketplace SVG sha256 = %q, want official Slack asset %q", got, officialMarketplaceIconSHA256)
+	}
 
 	var root struct {
 		XMLName xml.Name
@@ -47,12 +54,14 @@ func assertMarketplaceSVG(t *testing.T, icon []byte) {
 	if err := xml.Unmarshal(icon, &root); err != nil {
 		t.Fatal(err)
 	}
-	if root.XMLName.Local != "svg" || root.Width != "128" || root.Height != "128" || root.ViewBox != "0 0 128 128" {
+	if root.XMLName.Local != "svg" || root.Width != "54" || root.Height != "54" || root.ViewBox != "0 0 54 54" {
 		t.Fatalf("unexpected SVG root: name=%q width=%q height=%q viewBox=%q", root.XMLName.Local, root.Width, root.Height, root.ViewBox)
 	}
 
 	lower := strings.ToLower(string(icon))
-	for _, forbidden := range []string{"<script", "<foreignobject", "href=", "url(", "currentcolor"} {
+	// The official SVG uses url(#...) for an internal clip path. Its pinned
+	// digest prevents that reference from being replaced with external content.
+	for _, forbidden := range []string{"<script", "<foreignobject", "href=", "currentcolor"} {
 		if strings.Contains(lower, forbidden) {
 			t.Fatalf("marketplace SVG contains forbidden content %q", forbidden)
 		}
