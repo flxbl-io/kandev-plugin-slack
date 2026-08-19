@@ -5,10 +5,10 @@ name: release
 # Existing v* tag pushes skip preparation and only build and publish.
 #
 # The published tarball is what an operator uploads in Settings > Plugins. It
-# carries the five platform binaries, the plugin manifest, the README, and
-# slack-app-manifest.yaml — the last of these matters because setup starts by
-# pasting that file into Slack, so it has to travel with the package rather
-# than only living in this repository.
+# carries the five platform binaries, plugin manifest, marketplace icon,
+# README, and slack-app-manifest.yaml — the last of these matters because setup
+# starts by pasting that file into Slack, so it has to travel with the package
+# rather than only living in this repository.
 on:
   push:
     tags:
@@ -188,7 +188,7 @@ jobs:
 
       - name: Package all platforms
         working-directory: plugin
-        run: make package
+        run: make package verify-package
 
       - name: Extract checksums
         working-directory: plugin

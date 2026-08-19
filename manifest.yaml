@@ -6,6 +6,7 @@ description: "Turn Slack conversations into Kandev tasks. Mention @Kandev or run
 author: "kandev"
 categories: ["connector", "automation"]
 repo_url: "https://github.com/kdlbs/kandev-plugin-slack"
+icon: "assets/icon.svg"
 
 runtime:
   type: binary
