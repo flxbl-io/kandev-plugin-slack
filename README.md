@@ -157,5 +157,5 @@ nothing here has been released yet:
 
 ```bash
 curl -X DELETE localhost:<port>/api/plugins/kandev-plugin-slack
-curl -F package=@kandev-plugin-slack-0.1.0.tar.gz localhost:<port>/api/plugins/install
+curl -F package=@kandev-plugin-slack-0.1.1.tar.gz localhost:<port>/api/plugins/install
 ```
