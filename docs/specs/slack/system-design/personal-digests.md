@@ -1,7 +1,10 @@
 ---
 status: draft
 system: slack
-requirements: [REQ-SLACK-DIGEST-001, REQ-SLACK-DIGEST-002, REQ-SLACK-DIGEST-003]
+requirements:
+  - REQ-SLACK-DIGEST-001
+  - REQ-SLACK-DIGEST-002
+  - REQ-SLACK-DIGEST-003
 created: 2026-09-19
 owners: [flxbl-io]
 ---
