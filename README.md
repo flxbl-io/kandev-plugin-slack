@@ -149,8 +149,9 @@ name. The automation owns assignee mapping and deciding whether a card really
 needs human attention; skip unassigned/unmapped people. Include a plain card URL
 and concise reason. Text is limited to 4,000 Unicode characters. Slack markup,
 angle brackets, NUL, and mass mentions are rejected; markdown parsing, mention
-expansion, link previews and media previews are disabled. The tool does not
-itself read cards or resolve email addresses.
+expansion, link previews and media previews are disabled. Bare URLs remain
+clickable, including card links with query parameters. The tool does not itself
+read cards or resolve email addresses.
 
 The existing configured `xoxb-` bot token and `chat:write` scope are reused.
 [Slack documents direct user-ID posting](https://docs.slack.dev/reference/methods/chat.postMessage/#post-to-a-direct-message-channel)
@@ -272,6 +273,46 @@ replacement loses its local ledger. An uncertain/failed result remains blocked
 for human reconciliation; never invent another key to retry it. Validate a
 controlled send and identical repeated call before enabling a schedule.
 
+
+## Task notification cards
+
+Version 0.5.0 adds optional `card` metadata to both notification tools. Set
+`workfloor_url` in plugin settings to your HTTPS origin first. Existing text-only
+calls continue to work without it. Card presentation does not enable replies;
+only `notify_task_user` creates a conversation binding when conversations are
+configured.
+
+```json
+{
+  "user_id": "U12345678",
+  "text": "Decision needed on issue #123.",
+  "idempotency_key": "existing-stable-waiting-episode-key",
+  "card": {
+    "title": "Fix the source dependency build",
+    "issue_number": 123,
+    "workspace_name": "Engineering",
+    "repository": "example/project",
+    "attention": "input",
+    "summary": "Choose the next step for this task.",
+    "workfloor_url": "https://workfloor.example/?workspaceId=workspace&taskId=task&sessionId=session",
+    "issue_url": "https://github.com/example/project/issues/123"
+  }
+}
+```
+
+The card shows the full title, workspace/repository, attention reason and an
+Open in Workfloor button. View issue and View PR buttons appear only when their
+URLs are supplied. `attention` is `input`, `review`, or `error`; the caller must
+verify the current state. The plugin generates accessible fallback text with all
+destinations. No arbitrary Block Kit, mentions, previews or task-changing buttons
+are accepted. GitHub links must match the supplied repository and issue number;
+Workfloor links must use the configured origin and invocation workspace (plus
+the explicit task/session for bound notifications).
+
+Card metadata participates in the delivery fingerprint. Keep the old exact
+arguments and waiting-episode key for a retry, including a text-only notification
+sent before this upgrade. Changing an existing payload into a card conflicts; it
+does not send a duplicate. Use cards only for new notifications.
 
 ## Reply to an existing card from a Slack DM
 

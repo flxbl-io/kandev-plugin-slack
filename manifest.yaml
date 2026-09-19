@@ -1,6 +1,6 @@
 id: "kandev-plugin-slack"
 api_version: 1
-version: "0.4.0"
+version: "0.5.0"
 min_kandev_version: "0.95.0"
 display_name: "Slack"
 description: "Turn Slack conversations into Kandev tasks. Mention @Kandev or run /kandev and a utility agent triages the thread into the right workspace, workflow and column, then replies in-thread."
@@ -34,7 +34,7 @@ capabilities:
 
 agent_tools:
   - name: notify_user
-    description: Send a plain-text DM to one verified Slack user using the configured bot. Reuse the same idempotency key for the same notification; never retry an unknown delivery with a new key.
+    description: Send a DM to one verified Slack user using the configured bot. Supply optional card metadata for an issue-first card with navigation buttons. Reuse the same idempotency key for the same notification; never retry an unknown delivery with a new key.
     surfaces: [kanban-task, office-task]
     input_schema:
       type: object
@@ -50,6 +50,21 @@ agent_tools:
           type: string
           minLength: 1
           maxLength: 200
+        card:
+          type: object
+          description: Optional task card. Requires the configured Workfloor public origin. Supply current verified facts; never infer CI success. Existing notifications must reuse their original arguments.
+          properties:
+            title: {type: string, minLength: 1, maxLength: 500, description: Full issue or task title without an issue-number prefix.}
+            workspace_name: {type: string, minLength: 1, maxLength: 100}
+            attention: {type: string, enum: [input, review, error]}
+            summary: {type: string, minLength: 1, maxLength: 1200}
+            workfloor_url: {type: string, minLength: 1, maxLength: 800, description: HTTPS URL with workspaceId, taskId and sessionId.}
+            repository: {type: string, minLength: 1, maxLength: 200}
+            issue_number: {type: integer, minimum: 1}
+            issue_url: {type: string, minLength: 1, maxLength: 800}
+            pr_url: {type: string, minLength: 1, maxLength: 800}
+          required: [title, workspace_name, attention, summary, workfloor_url]
+          additionalProperties: false
       required: [user_id, text, idempotency_key]
       additionalProperties: false
     annotations:
@@ -69,6 +84,21 @@ agent_tools:
         session_id: {type: string, minLength: 1}
         text: {type: string, minLength: 1, maxLength: 3500}
         idempotency_key: {type: string, minLength: 1, maxLength: 160}
+        card:
+          type: object
+          description: Optional task card. Requires the configured Workfloor public origin. Supply current verified facts; never infer CI success. Existing notifications must reuse their original arguments.
+          properties:
+            title: {type: string, minLength: 1, maxLength: 500, description: Full issue or task title without an issue-number prefix.}
+            workspace_name: {type: string, minLength: 1, maxLength: 100}
+            attention: {type: string, enum: [input, review, error]}
+            summary: {type: string, minLength: 1, maxLength: 1200}
+            workfloor_url: {type: string, minLength: 1, maxLength: 800, description: HTTPS URL with workspaceId, taskId and sessionId.}
+            repository: {type: string, minLength: 1, maxLength: 200}
+            issue_number: {type: integer, minimum: 1}
+            issue_url: {type: string, minLength: 1, maxLength: 800}
+            pr_url: {type: string, minLength: 1, maxLength: 800}
+          required: [title, workspace_name, attention, summary, workfloor_url]
+          additionalProperties: false
       required: [user_id, task_id, session_id, text, idempotency_key]
       additionalProperties: false
     annotations:

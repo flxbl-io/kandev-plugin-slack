@@ -376,3 +376,52 @@ func TestValidateResponseURLRejectsNonSlackDestinations(t *testing.T) {
 		}
 	}
 }
+
+// URL buttons navigate in Slack; their interactive envelopes must only be acked.
+// @covers AC-SLACK-CARD-002.2
+func TestNotificationCardButtonOnlyAcknowledged(t *testing.T) {
+	ack := make(chan string, 1)
+	upgrade := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := upgrade.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		if err = c.WriteJSON(map[string]any{"type": "interactive", "envelope_id": "card-link", "payload": map[string]any{"type": "block_actions", "actions": []any{map[string]string{"action_id": "open_workfloor", "url": "https://workfloor.example/"}}}}); err != nil {
+			return
+		}
+		var reply map[string]string
+		if err = c.ReadJSON(&reply); err != nil {
+			return
+		}
+		ack <- reply["envelope_id"]
+		_ = c.WriteJSON(map[string]string{"type": "disconnect"})
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, _, err := websocket.DefaultDialer.DialContext(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	handled := make(chan struct{}, 1)
+	l := &socketListener{handle: func(context.Context, inboundRequest) { handled <- struct{}{} }}
+	if err = l.readLoop(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case value := <-ack:
+		if value != "card-link" {
+			t.Fatal(value)
+		}
+	default:
+		t.Fatal("missing ack")
+	}
+	select {
+	case <-handled:
+		t.Fatal("navigation dispatched task work")
+	default:
+	}
+}

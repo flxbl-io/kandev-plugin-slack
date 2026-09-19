@@ -18,3 +18,8 @@ Existing channel mentions and slash-command task creation remain supported. Card
 
 - [Personal digest requirements](requirements/personal-digests.md) and [design](system-design/personal-digests.md).
 - [General chat requirements](requirements/general-chat.md), [design](system-design/general-chat.md), and [delivery plan](../../plans/slack-general-chat/plan.md).
+
+- [Notification card requirements](requirements/notification-cards.md)
+- [Notification card design](system-design/notification-cards.md)
+- [Notification card plan and preview](../../plans/slack-notification-cards/plan.md)
+

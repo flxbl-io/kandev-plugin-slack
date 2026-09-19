@@ -16,11 +16,15 @@ func (p *slackPlugin) notifyTaskUser(ctx context.Context, r *pluginsdk.AgentTool
 	session, _ := r.Arguments["session_id"].(string)
 	invalid := notificationResult("invalid_request", user, false)
 	c := r.Context
-	if len(r.Arguments) != 5 || !slackUserID.MatchString(user) || strings.TrimSpace(text) == "" || !utf8.ValidString(text) || utf8.RuneCountInString(text) > 3500 || strings.ContainsAny(text, "<>\x00") || strings.Contains(text, "@channel") || strings.Contains(text, "@here") || strings.Contains(text, "@everyone") || key == "" || len(key) > 160 || task == "" || session == "" || c.WorkspaceID == "" || c.TaskID == "" || c.SessionID == "" {
+	if !notificationArguments(r.Arguments, true) || !slackUserID.MatchString(user) || strings.TrimSpace(text) == "" || !utf8.ValidString(text) || utf8.RuneCountInString(text) > 3500 || strings.ContainsAny(text, "<>\x00") || strings.Contains(text, "@channel") || strings.Contains(text, "@here") || strings.Contains(text, "@everyone") || key == "" || len(key) > 160 || task == "" || session == "" || c.WorkspaceID == "" || c.TaskID == "" || c.SessionID == "" {
 		return invalid
 	}
 	if c.Surface != "automation" && (c.Surface != "kanban-task" && c.Surface != "office-task" || task != c.TaskID || session != c.SessionID) {
 		return invalid
+	}
+	message, status := p.notificationMessage(ctx, r, text, "\n\nReply in this thread to continue this card. Questions and permissions must be answered in Workfloor.")
+	if status != "" {
+		return notificationResult(status, user, false)
 	}
 	cfg, err := p.bridge.settings(ctx)
 	if err != nil || !cfg.Conversations {
@@ -39,6 +43,9 @@ func (p *slackPlugin) notifyTaskUser(ctx context.Context, r *pluginsdk.AgentTool
 		return notificationResult("target_unavailable", user, false)
 	}
 	intent := conversationBinding{Team: cfg.Team, User: user, Target: target, Key: key, SourceTask: c.TaskID, SourceSession: c.SessionID, SourceInvocation: r.InvocationID, Fingerprint: notificationDigest(cfg.Team, text, actor, task, session)}
+	if message.blocks != "" {
+		intent.Fingerprint = notificationDigest(cfg.Team, message.fingerprint, actor, task, session)
+	}
 	intentID := notificationDigest(cfg.Team, c.WorkspaceID, user, key)
 	if err = writeConversation("intents", intentID, intent, true); os.IsExist(err) {
 		var old conversationBinding
@@ -48,7 +55,7 @@ func (p *slackPlugin) notifyTaskUser(ctx context.Context, r *pluginsdk.AgentTool
 	} else if err != nil {
 		return notificationResult("storage_unavailable", user, false)
 	}
-	result := p.deliverNotification(ctx, c.WorkspaceID, user, text+"\n\nReply in this thread to continue this card. Questions and permissions must be answered in Workfloor.", "conversation:"+notificationDigest(cfg.Team, key))
+	result := p.deliverNotificationMessage(ctx, c.WorkspaceID, user, message, "conversation:"+notificationDigest(cfg.Team, key))
 	if result.IsError {
 		return result
 	}
