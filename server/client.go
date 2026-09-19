@@ -72,6 +72,7 @@ type authResult struct {
 // StatusCode is usually 200 and Message carries Slack's error string.
 type apiError struct {
 	StatusCode int
+	RetryAfter int
 	Message    string
 }
 
@@ -143,7 +144,8 @@ func (c *client) post(ctx context.Context, method string, params url.Values, out
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &apiError{StatusCode: resp.StatusCode, Message: summarizeBody(raw)}
+		retryAfter, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
+		return &apiError{StatusCode: resp.StatusCode, RetryAfter: retryAfter, Message: summarizeBody(raw)}
 	}
 	var env envelope
 	if err := json.Unmarshal(raw, &env); err != nil {

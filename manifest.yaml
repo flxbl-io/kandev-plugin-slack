@@ -1,6 +1,7 @@
 id: "kandev-plugin-slack"
 api_version: 1
-version: "0.1.1"
+version: "0.2.0"
+min_kandev_version: "0.94.0"
 display_name: "Slack"
 description: "Turn Slack conversations into Kandev tasks. Mention @Kandev or run /kandev and a utility agent triages the thread into the right workspace, workflow and column, then replies in-thread."
 author: "kandev"
@@ -30,6 +31,32 @@ capabilities:
   # picks an existing workspace/workflow/column rather than inventing one.
   api_read: ["workspaces", "workflows", "repositories"]
   api_write: ["tasks"]
+
+agent_tools:
+  - name: notify_user
+    description: Send a plain-text DM to one verified Slack user using the configured bot. Reuse the same idempotency key for the same notification; never retry an unknown delivery with a new key.
+    surfaces: [kanban-task, office-task]
+    input_schema:
+      type: object
+      properties:
+        user_id:
+          type: string
+          pattern: '^[UW][A-Z0-9]{8,63}$'
+        text:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        idempotency_key:
+          type: string
+          minLength: 1
+          maxLength: 200
+      required: [user_id, text, idempotency_key]
+      additionalProperties: false
+    annotations:
+      read_only_hint: false
+      destructive_hint: false
+      idempotent_hint: true
+      open_world_hint: true
 
 webhooks:
   - key: "status"

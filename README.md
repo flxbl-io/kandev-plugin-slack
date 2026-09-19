@@ -126,10 +126,95 @@ redialled without backoff.
 tasks are created without a repository attached even though the agent is shown
 which repositories each workspace has.
 
+## Agent notifications
+
+Kandev 0.94.0 or newer can expose the plugin's `notify_user` agent tool as
+`kandev_kandev_plugin_slack_notify_user` in Kanban and Office task sessions.
+This includes task-backed scheduled automations and SSH executors: delivery
+runs in the host plugin process, never on the runner. Configuration/external
+MCP clients do not receive this tool. No send webhook is added.
+
+Example arguments:
+
+```json
+{
+  "user_id": "U12345678",
+  "text": "Your review is needed on Example card: https://workfloor.example/task/123",
+  "idempotency_key": "task-123:waiting-episode-456"
+}
+```
+
+Use a verified Slack user ID (`U…` or `W…`), never a channel, email or display
+name. The automation owns assignee mapping and deciding whether a card really
+needs human attention; skip unassigned/unmapped people. Include a plain card URL
+and concise reason. Text is limited to 4,000 Unicode characters. Slack markup,
+angle brackets, NUL, and mass mentions are rejected; markdown parsing, mention
+expansion, link previews and media previews are disabled. The tool does not
+itself read cards or resolve email addresses.
+
+The existing configured `xoxb-` bot token and `chat:write` scope are reused.
+[Slack documents direct user-ID posting](https://docs.slack.dev/reference/methods/chat.postMessage/#post-to-a-direct-message-channel)
+through `chat.postMessage`; the tool does not call `conversations.open` and
+therefore does not request `im:write`, `users:read` or `users:read.email`.
+A bot may still be forbidden from entering a particular DM; `channel_not_found`
+reports that failure. Browser fallback credentials are never used to send agent
+notifications. Existing incoming triage and its fallback are unchanged.
+
+### Delivery and duplicate suppression
+
+The host supplies the caller's verified task, session and workspace. Duplicate
+keys are scoped to that workspace and Slack recipient, so the same automation
+can run in new task sessions without re-sending an unchanged notification. Use a
+stable key for each waiting episode, and change it when the card leaves and
+later returns to waiting or acquires a new actionable question. Reusing a key
+with different text returns `idempotency_conflict`; do not include changing
+clock times in otherwise identical messages.
+
+The result contains `status`, `recipient`, and `duplicate`; confirmed `sent`
+results also contain `channel` and `timestamp`. The same safe JSON is present
+in fallback text for hosts that omit structured content on MCP errors. Only
+`sent` is success. A replay
+returns the original result with `duplicate: true` and makes no Slack request.
+Permission and credential failures return fixed safe codes such as
+`missing_scope`, `invalid_auth`, `token_revoked`, `account_inactive`,
+`user_not_found` or `channel_not_found`. `rate_limited` includes
+`retry_after_seconds` when Slack provides a positive Retry-After header.
+`not_configured` means a bot token or Host configuration was unavailable.
+Raw Slack bodies, transport errors and credentials are never returned.
+
+Claims and results are stored under `KANDEV_PLUGIN_DATA_DIR/notifications-v1`
+in private, append-only journal files. Exclusive file creation arbitrates
+concurrent processes sharing that directory; a result is flushed before return.
+The directory survives restart/upgrade and disable. Uninstall removes it.
+Include it in backups; do not delete it as routine cache cleanup. Records contain
+content hashes and delivery metadata, not message text or tokens. Records have
+no automatic expiry; an operator may retire old records only when their keys
+can no longer be issued. Use a local filesystem with reliable exclusive-create
+and flush semantics; a shared network filesystem is not supported.
+
+A timeout, cancellation during sending, malformed response, Slack internal
+error, incomplete journal or failed result persistence returns `unknown`.
+That may mean Slack accepted the message. The plugin never retries, follows a
+redirect, or expires an uncertain claim. **Do not replace an unknown key to
+force a retry:** reconcile with the recipient/operator first. Concurrent calls
+can observe `unknown` while the first call is in progress; repeat the same key
+later to read its committed result. This favors avoiding duplicate pings over
+guaranteed delivery; it is not an exactly-once promise across network/power
+failures. A crash before sending can also leave a blocked claim.
+
+Confirmed failures are retained too. After fixing configuration/permissions or
+waiting out a reported rate limit, an operator may authorize a new attempt with
+a new key only for an explicitly rejected (`rate_limited`, permission or auth)
+result, never `unknown`. `storage_unavailable` means no send was attempted by
+that invocation; preserve any existing journal until its state is understood.
+
 ## Developing against the SDK
 
 `pkg/pluginsdk` is not published as a standalone module yet, so `go.mod`
-resolves it from a sibling checkout of the Kandev monorepo:
+resolves it from a sibling checkout of the Kandev monorepo. CI pins SDK
+revision `f92877b4be2724c0bfa1f1cdbdd35edd68a24fa6` (v0.95.0); use the same
+revision locally. The agent-tool wire contract is already present in v0.94.0:
+
 
 ```
 ~/kandev-plugins/
@@ -157,5 +242,5 @@ nothing here has been released yet:
 
 ```bash
 curl -X DELETE localhost:<port>/api/plugins/kandev-plugin-slack
-curl -F package=@kandev-plugin-slack-0.1.1.tar.gz localhost:<port>/api/plugins/install
+curl -F package=@kandev-plugin-slack-0.2.0.tar.gz localhost:<port>/api/plugins/install
 ```
