@@ -54,7 +54,7 @@ func (b *conversationBridge) postOnce(ctx context.Context, c conversationSetting
 		Channel string `json:"channel"`
 		TS      string `json:"ts"`
 	}
-	err = client.post(ctx, "chat.postMessage", url.Values{"channel": {channel}, "thread_ts": {thread}, "text": {text}, "mrkdwn": {"false"}, "parse": {"none"}, "link_names": {"false"}, "unfurl_links": {"false"}, "unfurl_media": {"false"}}, &response)
+	err = client.post(ctx, "chat.postMessage", url.Values{"channel": {channel}, "thread_ts": {thread}, "text": {text}, "mrkdwn": {"false"}, "link_names": {"false"}, "unfurl_links": {"false"}, "unfurl_media": {"false"}}, &response)
 	if err != nil {
 		var apiErr *apiError
 		if errors.As(err, &apiErr) && apiErr.StatusCode == 429 {

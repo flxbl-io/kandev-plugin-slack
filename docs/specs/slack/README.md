@@ -15,3 +15,7 @@ The standalone Slack plugin owns the binding between a Slack thread and a Workfl
 - [Delivery plan](../../plans/slack-conversations/plan.md)
 
 Existing channel mentions and slash-command task creation remain supported. This first release adds conversations on existing cards, not a general assistant or a replacement permission UI.
+
+- [Notification card requirements](requirements/notification-cards.md)
+- [Notification card design](system-design/notification-cards.md)
+- [Notification card plan and preview](../../plans/slack-notification-cards/plan.md)
