@@ -422,3 +422,25 @@ Do not delete digest-day or outbox records to retry an uncertain Slack post.
 They prevent duplicates. Inspect the bot DM and reconcile manually. A stale
 prepared digest is held if any included task, assignment, mapping or attention
 state changes before delivery; a later date can produce a fresh digest.
+
+## General DMs (0.6.0)
+
+With a host that implements AssistantHost, enable **General direct messages**
+and select the **General DM agent profile** in this plugin's settings. Keep the
+existing Slack app/team/user mapping. The profile interprets requests; created
+tasks use their workflow's agent. There is no model fallback.
+
+Try “What needs my attention?” or “Create a task in Codev, Normal workflow,
+sfp-pro repository, to investigate the validation failure.” Missing choices
+produce a question in the same DM thread. Reply in that thread to clarify.
+Status results have an Open in Workfloor button. New tasks start by default;
+disable **Start tasks created in DMs**, or ask to queue the task, to leave it
+on the board. Formal questions and permission approvals still use Workfloor.
+
+General DMs are disabled by default. A host update is required before enabling;
+an SDK overlay alone does not implement the human-scoped operations. Unknown
+users receive linking guidance. Replayed events never create another task; an
+interrupted launch is reported as unconfirmed and requires checking its card.
+Importing an existing GitHub issue from a DM is not part of this release.
+Existing bound notification replies, digests, mentions and slash commands
+retain their existing routing.

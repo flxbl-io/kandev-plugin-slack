@@ -36,3 +36,12 @@ After successful selection or creation, persist the thread-to-card target and re
 Store operation and output progress before acknowledging completion. Serialize a thread, preserve server-side dedup across different threads, and reauthorize referenced tasks before later model calls or Slack delivery. Cap stored history to the most recent 20 conversational messages and 16 KiB; expired result selections must be looked up again. Output uses the existing bounded plain-text/thread delivery rules. Personal digest preferences remain independent.
 
 REQ-001 maps to scoped discovery and thread context; REQ-002 to typed operations and card handoff; REQ-003 to identity, durable receipts, routing and delivery. A packaged process/host/fake-Slack fixture proves the full path before a disposable live Slack pilot; a build or credential probe alone is insufficient.
+
+## 0.6.0 delivery scope
+
+This delivery implements the requested general DM status and new-task creation
+paths plus the plugin-owned profile selector. Verified issue import and starting
+arbitrary existing tasks remain a subsequent delivery; those requests direct
+the user to the ordinary Workfloor issue-import flow. New task creation can
+start its workflow or leave the task queued. General chat remains disabled until
+the host/plugin pair is deployed and piloted.

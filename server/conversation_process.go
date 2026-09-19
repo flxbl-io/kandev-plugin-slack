@@ -18,7 +18,7 @@ func (b *conversationBridge) process(ctx context.Context, c conversationSettings
 	if isDigestCommand(item) {
 		return b.digestCommand(ctx, c, key, item)
 	}
-	if !c.Conversations {
+	if !c.Conversations && !c.GeneralChat {
 		return b.guide(ctx, c, key, item, digestUsage)
 	}
 	var binding conversationBinding
@@ -27,6 +27,12 @@ func (b *conversationBridge) process(ctx context.Context, c conversationSettings
 		return err
 	}
 	actor := c.actor(item.Team, item.User)
+	if c.GeneralChat && (os.IsNotExist(err) || item.Thread == "" || item.GeneralCreate != nil) {
+		return b.generalChat(ctx, c, key, item)
+	}
+	if !c.Conversations {
+		return b.guide(ctx, c, key, item, "Card replies are disabled. Open Workfloor to continue this task.")
+	}
 	if err != nil || item.Thread == "" || actor == "" || binding.User != item.User || binding.Target.ActorID != actor {
 		return b.guide(ctx, c, key, item, "Reply in a new card notification thread to continue work. Ask your Workfloor administrator if your Slack account has not been linked.")
 	}

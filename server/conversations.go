@@ -18,6 +18,7 @@ type conversationBridge struct {
 	lastDigestSweep time.Time
 }
 type conversationInbox struct {
+	GeneralCreate                                              *pluginsdk.AssistantCreate
 	Team, App, Event, Channel, Thread, User, Text, TS, Receipt string
 	Created                                                    time.Time
 }
@@ -142,12 +143,12 @@ func (b *conversationBridge) reconcile(ctx context.Context) {
 			return
 		}
 		item := pending.item
-		threadKey := notificationDigest(item.Team, item.Channel, item.Thread)
+		threadKey := generalThreadKey(&item)
 		if visited[threadKey] {
 			continue
 		}
 		visited[threadKey] = true
-		callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		callCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		err = b.process(callCtx, c, pending.key, &item)
 		cancel()
 		if err != nil {

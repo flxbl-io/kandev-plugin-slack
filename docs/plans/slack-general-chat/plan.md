@@ -34,4 +34,13 @@ Work order 1 proves authorization and durable mutation behavior. Work order 2 pr
 
 ## Results
 
-Design only. Implementation and runtime changes have not started. Main risk: treating plugin-wide reads/writes or a model choice as permission to act for a human. The host operation contract resolves that risk and must precede plugin activation.
+Status and new-task creation are implemented with the host permission/receipt boundary. See [verification](verification.md) for local and package evidence. Host/plugin deployment and the live general-DM pilot remain outstanding.
+
+## 0.6.0 delivery scope
+
+This delivery implements the requested general DM status and new-task creation
+paths plus the plugin-owned profile selector. Verified issue import and starting
+arbitrary existing tasks remain a subsequent delivery; those requests direct
+the user to the ordinary Workfloor issue-import flow. New task creation can
+start its workflow or leave the task queued. General chat remains disabled until
+the host/plugin pair is deployed and piloted.
