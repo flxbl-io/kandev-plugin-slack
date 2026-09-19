@@ -14,3 +14,9 @@ if "rpc ResolveConversation(" not in text:
     text += "\n" + (source / "conversations.proto").read_text()
     proto.write_text(text)
 (root / "pkg/pluginsdk/conversations.go").write_text((source / "conversations.go.txt").read_text())
+
+text = proto.read_text()
+if "rpc ResolveAttentionTarget(" not in text:
+    text = text.replace("  rpc ResolveConversation(ConversationTarget) returns (ConversationTarget);", "  rpc ResolveConversation(ConversationTarget) returns (ConversationTarget);\n  rpc ResolveAttentionTarget(ConversationTarget) returns (ConversationTarget);")
+    proto.write_text(text)
+(root / "pkg/pluginsdk/attention.go").write_text((source / "attention.go.txt").read_text())

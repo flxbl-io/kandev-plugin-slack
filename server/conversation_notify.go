@@ -23,7 +23,7 @@ func (p *slackPlugin) notifyTaskUser(ctx context.Context, r *pluginsdk.AgentTool
 		return invalid
 	}
 	cfg, err := p.bridge.settings(ctx)
-	if err != nil {
+	if err != nil || !cfg.Conversations {
 		return notificationResult("not_configured", user, false)
 	}
 	actor := cfg.actor(cfg.Team, user)
