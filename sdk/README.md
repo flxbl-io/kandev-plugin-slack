@@ -22,3 +22,8 @@ The overlay also includes the additive optional `AttentionHost` read-only
 `ResolveAttentionTarget(ConversationTarget)` RPC. The host verifies the current
 assigned human and primary session before digest disclosure, including failed
 sessions. It requires `api_read:attention`; old hosts return Unimplemented.
+
+The overlay includes the optional AssistantHost API for human-scoped task
+status, durable creation and operator-selected profile invocation. Its public
+Go types define the bounded JSON RPC payload. It requires the corresponding
+FLXBL host implementation and assistant read/write capabilities.

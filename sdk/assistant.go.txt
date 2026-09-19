@@ -1,0 +1,145 @@
+package pluginsdk
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	pluginv1 "github.com/kandev/kandev/proto/kandev/plugin/v1"
+)
+
+// AssistantHost is an optional, human-scoped extension. Plugins authenticate
+// their external human mapping; the host applies current access on every call.
+type AssistantHost interface{ Assistant() AssistantAccessor }
+type AssistantAccessor interface {
+	Query(context.Context, AssistantQuery) (*AssistantSnapshot, error)
+	Create(context.Context, AssistantCreate) (*AssistantCreated, error)
+	InvokeProfile(context.Context, string, string) (string, error)
+}
+type AssistantQuery struct {
+	ActorID string `json:"actor_id"`
+	Query   string `json:"query,omitempty"`
+	TaskID  string `json:"task_id,omitempty"`
+	Mine    bool   `json:"mine,omitempty"`
+}
+type AssistantChoice struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+type AssistantWorkspace struct {
+	AssistantChoice
+	Workflows    []AssistantChoice `json:"workflows"`
+	Repositories []AssistantChoice `json:"repositories"`
+}
+type AssistantTask struct {
+	ID           string `json:"id"`
+	WorkspaceID  string `json:"workspace_id"`
+	Title        string `json:"title"`
+	State        string `json:"state"`
+	SessionID    string `json:"session_id,omitempty"`
+	SessionState string `json:"session_state,omitempty"`
+	AssigneeID   string `json:"assignee_id,omitempty"`
+}
+type AssistantSnapshot struct {
+	Workspaces []AssistantWorkspace `json:"workspaces"`
+	Tasks      []AssistantTask      `json:"tasks"`
+	Partial    bool                 `json:"partial"`
+}
+type AssistantCreate struct {
+	ActorID      string `json:"actor_id"`
+	EventID      string `json:"event_id"`
+	WorkspaceID  string `json:"workspace_id"`
+	WorkflowID   string `json:"workflow_id"`
+	RepositoryID string `json:"repository_id,omitempty"`
+	Title        string `json:"title"`
+	Description  string `json:"description"`
+	Start        bool   `json:"start"`
+}
+type AssistantCreated struct {
+	Task AssistantTask `json:"task"`
+	// queued, starting, running, failed, or start_unconfirmed. A replay never
+	// restarts an uncertain launch; the user must inspect the existing card.
+	Status   string `json:"status"`
+	Replayed bool   `json:"replayed"`
+}
+
+func Assistant(h Host) (AssistantAccessor, bool) {
+	a, ok := h.(AssistantHost)
+	if !ok {
+		return nil, false
+	}
+	return a.Assistant(), true
+}
+func (h *grpcHostClient) Assistant() AssistantAccessor { return grpcAssistant{h.client} }
+
+type grpcAssistant struct{ client pluginv1.HostClient }
+
+func (a grpcAssistant) call(ctx context.Context, op string, in, out any) error {
+	raw, err := json.Marshal(in)
+	if err != nil {
+		return err
+	}
+	res, err := a.client.ExternalAssistant(ctx, &pluginv1.ExternalAssistantRequest{Operation: op, PayloadJson: string(raw)})
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal([]byte(res.GetPayloadJson()), out)
+}
+func (a grpcAssistant) Query(ctx context.Context, q AssistantQuery) (*AssistantSnapshot, error) {
+	var out AssistantSnapshot
+	err := a.call(ctx, "query", q, &out)
+	return &out, err
+}
+func (a grpcAssistant) Create(ctx context.Context, q AssistantCreate) (*AssistantCreated, error) {
+	var out AssistantCreated
+	err := a.call(ctx, "create", q, &out)
+	return &out, err
+}
+
+type assistantProfile struct {
+	ConfigKey string `json:"config_key"`
+	Prompt    string `json:"prompt"`
+}
+
+func (a grpcAssistant) InvokeProfile(ctx context.Context, key, prompt string) (string, error) {
+	var out string
+	err := a.call(ctx, "profile", assistantProfile{key, prompt}, &out)
+	return out, err
+}
+func (s *grpcHostServer) ExternalAssistant(ctx context.Context, in *pluginv1.ExternalAssistantRequest) (*pluginv1.ExternalAssistantResponse, error) {
+	a, ok := s.impl.(AssistantHost)
+	if !ok {
+		return nil, errUnimplementedHostData("assistant")
+	}
+	if len(in.GetPayloadJson()) > 131072 {
+		return nil, fmt.Errorf("assistant request too large")
+	}
+	var out any
+	var err error
+	switch in.GetOperation() {
+	case "query":
+		var q AssistantQuery
+		if err = json.Unmarshal([]byte(in.GetPayloadJson()), &q); err == nil {
+			out, err = a.Assistant().Query(ctx, q)
+		}
+	case "create":
+		var q AssistantCreate
+		if err = json.Unmarshal([]byte(in.GetPayloadJson()), &q); err == nil {
+			out, err = a.Assistant().Create(ctx, q)
+		}
+	case "profile":
+		var q assistantProfile
+		if err = json.Unmarshal([]byte(in.GetPayloadJson()), &q); err == nil {
+			out, err = a.Assistant().InvokeProfile(ctx, q.ConfigKey, q.Prompt)
+		}
+	default:
+		return nil, fmt.Errorf("unknown assistant operation")
+	}
+	if err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		return nil, err
+	}
+	return &pluginv1.ExternalAssistantResponse{PayloadJson: string(raw)}, nil
+}

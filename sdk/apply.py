@@ -20,3 +20,10 @@ if "rpc ResolveAttentionTarget(" not in text:
     text = text.replace("  rpc ResolveConversation(ConversationTarget) returns (ConversationTarget);", "  rpc ResolveConversation(ConversationTarget) returns (ConversationTarget);\n  rpc ResolveAttentionTarget(ConversationTarget) returns (ConversationTarget);")
     proto.write_text(text)
 (root / "pkg/pluginsdk/attention.go").write_text((source / "attention.go.txt").read_text())
+
+text = proto.read_text()
+if "rpc ExternalAssistant(" not in text:
+    text = text.replace(anchor, anchor + "\n  rpc ExternalAssistant(ExternalAssistantRequest) returns (ExternalAssistantResponse);")
+    text += "\nmessage ExternalAssistantRequest { string operation = 1; string payload_json = 2; }\nmessage ExternalAssistantResponse { string payload_json = 1; }\n"
+    proto.write_text(text)
+(root / "pkg/pluginsdk/assistant.go").write_text((source / "assistant.go.txt").read_text())

@@ -13,7 +13,7 @@ An assigned human can reply in a Workfloor notification thread, continue the exi
 
 - **AC-SLACK-CONVERSATIONS-001.1:** A reply from the verified notification recipient reaches exactly the notified card and session; no replacement card or session is created.
 - **AC-SLACK-CONVERSATIONS-001.2:** Unknown users, another recipient, removed workspace access, changed assignee, archived cards, and superseded sessions are rejected before execution or conversation disclosure. The reply explains how to continue through Workfloor without exposing another user's task details.
-- **AC-SLACK-CONVERSATIONS-001.3:** Unbound top-level DMs and old notifications without a binding receive usage guidance. They never select the last active task implicitly.
+- **AC-SLACK-CONVERSATIONS-001.3:** When general chat is disabled, unbound top-level DMs and old notifications without a binding receive usage guidance. The opt-in [general-chat contract](general-chat.md) owns unbound assistant threads when enabled. They never select the last active task implicitly.
 - **AC-SLACK-CONVERSATIONS-001.4:** Workfloor records the verified human and Slack provenance. A text mention, pasted URL, or requested user ID cannot change the sender or target.
 
 ### REQ-SLACK-CONVERSATIONS-002: Useful two-way conversation
@@ -32,4 +32,4 @@ An assigned human can reply in a Workfloor notification thread, continue the exi
 
 ## Exclusions
 
-General assistant DMs, new-card creation from DMs, attachments, group DMs, Slack Connect, agent interruption, model switching, merging/deployment, and granting approvals from Slack are deferred. Structured questions/buttons can be a later increment; their current Workfloor controls remain authoritative.
+General assistant DMs and new-card creation from DMs are owned by the separately gated [general-chat extension](general-chat.md). Attachments, group DMs, Slack Connect, agent interruption, model switching, merging/deployment, and granting approvals from Slack remain excluded. Structured questions/buttons can be a later increment; their current Workfloor controls remain authoritative.
