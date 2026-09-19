@@ -13,4 +13,4 @@ if "rpc ResolveConversation(" not in text:
     text = text.replace(anchor, anchor + "\n  rpc ResolveConversation(ConversationTarget) returns (ConversationTarget);\n  rpc SubmitExternalMessage(ExternalMessageRequest) returns (ExternalMessageReceipt);\n  rpc GetExternalMessage(ExternalMessageLookup) returns (ExternalMessageReceipt);")
     text += "\n" + (source / "conversations.proto").read_text()
     proto.write_text(text)
-(root / "pkg/pluginsdk/conversations.go").write_text((source / "conversations.go").read_text())
+(root / "pkg/pluginsdk/conversations.go").write_text((source / "conversations.go.txt").read_text())

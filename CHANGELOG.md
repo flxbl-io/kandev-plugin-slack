@@ -1,3 +1,5 @@
+# Changelog
+
 ## 0.3.0
 
 - Add opt-in, human-mapped replies to explicit card notification threads.
@@ -6,7 +8,6 @@
 - Require the additive Workfloor conversation Host API; include a public SDK
   overlay for the pinned upstream SDK without distributing private core code.
 
-# Changelog
 
 ## [0.1.1] - 2026-08-21
 

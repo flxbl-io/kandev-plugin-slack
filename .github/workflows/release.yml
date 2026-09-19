@@ -180,6 +180,12 @@ jobs:
           go-version-file: plugin/go.mod
           cache-dependency-path: plugin/go.sum
 
+      - name: Apply public conversation SDK extension
+        working-directory: plugin
+        run: |
+          python3 sdk/apply.py ../kandev/apps/backend
+          make -C ../kandev/apps/backend proto
+
       - name: Verify
         working-directory: plugin
         run: |
