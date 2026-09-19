@@ -148,7 +148,7 @@ func (c *client) sendNotification(ctx context.Context, user, text string) *plugi
 	transport.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	sender := *c
 	sender.http = &transport
-	params := url.Values{"channel": {user}, "text": {text}, "mrkdwn": {"false"}, "parse": {"none"}, "link_names": {"false"}, "unfurl_links": {"false"}, "unfurl_media": {"false"}}
+	params := url.Values{"channel": {user}, "text": {text}, "mrkdwn": {"false"}, "link_names": {"false"}, "unfurl_links": {"false"}, "unfurl_media": {"false"}}
 	var response struct {
 		Channel string `json:"channel"`
 		TS      string `json:"ts"`

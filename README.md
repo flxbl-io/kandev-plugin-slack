@@ -149,8 +149,9 @@ name. The automation owns assignee mapping and deciding whether a card really
 needs human attention; skip unassigned/unmapped people. Include a plain card URL
 and concise reason. Text is limited to 4,000 Unicode characters. Slack markup,
 angle brackets, NUL, and mass mentions are rejected; markdown parsing, mention
-expansion, link previews and media previews are disabled. The tool does not
-itself read cards or resolve email addresses.
+expansion, link previews and media previews are disabled. Bare URLs remain
+clickable, including card links with query parameters. The tool does not itself
+read cards or resolve email addresses.
 
 The existing configured `xoxb-` bot token and `chat:write` scope are reused.
 [Slack documents direct user-ID posting](https://docs.slack.dev/reference/methods/chat.postMessage/#post-to-a-direct-message-channel)

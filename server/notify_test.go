@@ -48,7 +48,7 @@ func TestNotificationDeliveryAndRestartDedup(t *testing.T) {
 		if err := r.ParseForm(); err != nil {
 			t.Error(err)
 		}
-		if r.Form.Get("channel") != "U12345678" || r.Form.Get("mrkdwn") != "false" || r.Form.Get("parse") != "none" {
+		if r.Form.Get("channel") != "U12345678" || r.Form.Get("mrkdwn") != "false" || r.Form.Get("parse") == "none" {
 			t.Errorf("unsafe message parameters: %v", r.Form)
 		}
 		fmt.Fprint(w, `{"ok":true,"channel":"D12345678","ts":"12345.000001"}`)
