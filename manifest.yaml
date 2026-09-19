@@ -1,12 +1,12 @@
 id: "kandev-plugin-slack"
 api_version: 1
-version: "0.2.1"
-min_kandev_version: "0.94.0"
+version: "0.3.0"
+min_kandev_version: "0.95.0"
 display_name: "Slack"
 description: "Turn Slack conversations into Kandev tasks. Mention @Kandev or run /kandev and a utility agent triages the thread into the right workspace, workflow and column, then replies in-thread."
 author: "kandev"
 categories: ["connector", "automation"]
-repo_url: "https://github.com/kdlbs/kandev-plugin-slack"
+repo_url: "https://github.com/flxbl-io/kandev-plugin-slack"
 icon: "assets/icon.svg"
 
 runtime:
@@ -29,8 +29,8 @@ capabilities:
   agent_invoke: true
   # The triage prompt is built from the real Kandev topology so the agent
   # picks an existing workspace/workflow/column rather than inventing one.
-  api_read: ["workspaces", "workflows", "repositories"]
-  api_write: ["tasks"]
+  api_read: ["workspaces", "workflows", "repositories", "conversations"]
+  api_write: ["tasks", "conversations"]
 
 agent_tools:
   - name: notify_user
@@ -58,6 +58,25 @@ agent_tools:
       idempotent_hint: true
       open_world_hint: true
 
+  - name: notify_task_user
+    description: Notify the current mapped human assignee about an explicit card and bind replies to its current session. Reuse the same key for the same notification. Never retry uncertain delivery with a new key.
+    surfaces: [kanban-task, office-task]
+    input_schema:
+      type: object
+      properties:
+        user_id: {type: string, pattern: '^[UW][A-Z0-9]{8,63}$'}
+        task_id: {type: string, minLength: 1}
+        session_id: {type: string, minLength: 1}
+        text: {type: string, minLength: 1, maxLength: 3500}
+        idempotency_key: {type: string, minLength: 1, maxLength: 160}
+      required: [user_id, task_id, session_id, text, idempotency_key]
+      additionalProperties: false
+    annotations:
+      read_only_hint: false
+      destructive_hint: false
+      idempotent_hint: true
+      open_world_hint: true
+
 webhooks:
   - key: "status"
     description: "Connection status, detected auth mode, and recent triage activity (UI relay, not an external webhook)"
@@ -72,6 +91,25 @@ webhooks:
 config_schema:
   type: object
   properties:
+    conversations_enabled:
+      type: boolean
+      default: false
+      title: Card conversations
+      description: Enable private replies to bound card notification threads. Requires the conversation Host API and an operator-managed user mapping.
+    conversation_team_id:
+      type: string
+      title: Conversation Slack team ID
+    conversation_app_id:
+      type: string
+      title: Conversation Slack app ID
+    conversation_users:
+      type: string
+      title: Conversation user mapping
+      description: 'JSON object mapping TEAM_ID:SLACK_USER_ID to a Workfloor user ID. Example: {"T12345678:U12345678":"workfloor-user-id"}.'
+    workfloor_url:
+      type: string
+      title: Workfloor public origin
+      description: HTTPS origin used for authorized card links, without a path or query string.
     app_token:
       type: string
       secret: true

@@ -1,0 +1,22 @@
+message ConversationTarget {
+ string actor_id = 1;
+ string workspace_id = 2;
+ string task_id = 3;
+ string session_id = 4;
+}
+message ExternalMessageRequest {
+ ConversationTarget target = 1;
+ string event_id = 2;
+ string text = 3;
+}
+message ExternalMessageLookup {
+ string actor_id = 1;
+ string receipt_id = 2;
+}
+message ExternalMessageReceipt {
+ string id = 1;
+ string status = 2;
+ string queue_id = 3;
+ string turn_id = 4;
+ string output = 5;
+}

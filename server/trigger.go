@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -28,8 +29,9 @@ const baseTick = 5 * time.Second
 // guaranteed for every path, and a source that outlived its credentials would
 // keep talking to Slack with them.
 type supervisor struct {
-	host   func() pluginsdk.Host
-	runner *runner
+	persistDM func(context.Context, json.RawMessage) error
+	host      func() pluginsdk.Host
+	runner    *runner
 
 	scanNow chan struct{}
 
@@ -130,6 +132,7 @@ func (s *supervisor) ensureSocket(ctx context.Context, cfg *config) {
 	sourceCtx, cancel := context.WithCancel(ctx)
 	listener := &socketListener{
 		appToken:  cfg.AppToken,
+		persistDM: s.persistDM,
 		botUserID: botUserID,
 		handle: func(reqCtx context.Context, req inboundRequest) {
 			// Already acknowledged to Slack; the error is recorded on the

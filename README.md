@@ -271,3 +271,65 @@ The plugin's durable journal prevents repeat delivery even after an observer
 replacement loses its local ledger. An uncertain/failed result remains blocked
 for human reconciliation; never invent another key to retry it. Validate a
 controlled send and identical repeated call before enabling a schedule.
+
+
+## Reply to an existing card from a Slack DM
+
+Version 0.3.0 adds opt-in card conversations. A reply in a **new bound card
+notification thread** continues that card's existing agent session. The agent's
+completed answer returns to the same thread. Existing `notify_user` notifications
+remain compatible, but do not acquire a target automatically.
+
+1. Deploy a Workfloor host implementing `ConversationHost` (ResolveConversation,
+   SubmitExternalMessage, GetExternalMessage). The minimum-version field alone
+   is not sufficient; old hosts fail closed when these RPCs are unavailable.
+2. Build using the [public SDK extension](sdk/README.md), then package and install
+   the plugin. No private host source is included in the plugin repository.
+3. Update the Slack app from `slack-app-manifest.yaml`: enable the Messages tab,
+   subscribe to `message.im`, and add `im:history`. Reinstall the app so the new
+   scope takes effect. Socket Mode remains enabled; no public webhook is needed.
+4. Set `conversation_team_id`, `conversation_app_id`, and the HTTPS
+   `workfloor_url` origin. Set `conversation_users` to a JSON object mapping
+   `TEAM_ID:SLACK_USER_ID` to a Workfloor user ID. Only administrators should
+   maintain this mapping. Enable `conversations_enabled` for a controlled pilot.
+5. Have the observer call `notify_task_user` with `user_id`, explicit `task_id`
+   and `session_id`, `text`, and a stable `idempotency_key`. Its trusted workspace
+   context must match the card. A normal task agent can notify only its own
+   task/session; an automation can notify eligible cards in its workspace.
+6. Reply in that notification's thread. The mapped human must still be the
+   assignee, retain workspace access, and target the current session. Formal
+   questions and permission requests are answered in Workfloor initially.
+
+For Workfloor automation tools, render the explicit surface-enabled manifest:
+
+```sh
+python3 scripts/workfloor-manifest.py > /tmp/slack-workfloor-manifest.yaml
+make package MANIFEST=/tmp/slack-workfloor-manifest.yaml KANDEV_BACKEND=/path/to/workfloor/apps/backend
+make verify-package
+```
+
+Keep the notification automation paused during the first pilot. Verify one
+assigned disposable card, its answer, replay deduplication, and a plugin restart
+before expanding. General top-level DMs receive guidance; they do not create new
+cards or choose the last card implicitly. Channel mentions and slash-command
+triage keep their existing behavior.
+
+### Recovery and privacy
+
+The plugin saves inbound events before Socket Mode acknowledgement. It polls
+outstanding host receipts every five seconds, so event delivery is not required
+for recovery. Replies within one binding are serialized. Human mapping and host
+access are rechecked before output; only the accepted turn's completed visible
+answer is delivered, with long responses shortened and linked to the card.
+
+The `conversations-v1` directory under `KANDEV_PLUGIN_DATA_DIR` contains private
+inbound text, thread bindings, and delivery journals. Back it up with the plugin
+state. It is not a credentials store. Completed-event and delivery tombstones
+are retained to prevent replay; automatic retention pruning is not implemented.
+The pending inbox is limited to 128 records and 32 KB per input message.
+
+A Slack 429 waits for Retry-After. A lost or ambiguous post is never blindly
+resent, even after restart. Logs identify the affected event digest; inspect its
+outbox record and the actual Slack thread before any manual recovery. Likewise,
+an uncertain host receipt requires inspecting the card before issuing a new
+instruction. Never bypass either journal by inventing a fresh idempotency key.
