@@ -1,0 +1,13 @@
+# Notification card verification — 2026-09-19
+
+- Red: both tool entry points rejected card metadata; the new delivery/restart/binding tests failed on invalid_request before implementation. Additional zero-issue, empty optional URL and encoded-control cases failed before validation was tightened.
+- Green: `go test -race -modfile=/tmp/slack-digest.mod ./server -count=1` passed (3.971s); `go vet -modfile=/tmp/slack-digest.mod ./server` and formatting/diff checks passed. Uses the existing pinned public SDK with the repository's additive extension.
+- Delivery coverage: long literal titles, optional buttons, exact query-string destinations, generated accessible fallback, no mention/preview expansion, old journal replay, changed-card key conflicts, bound-thread routing and URL-action acknowledgement without task execution.
+- Packaging: all five declared platform executables built; `make package verify-package` passed with the Workfloor manifest. 0.5.0 artifact SHA-256: `54810ecce3ffc3793436160bf4f5bb4692456de267f0a1037db87577ce21947c`.
+- Disposable host: real packaged 0.4.1 to 0.5.0 install, active without warning, settings/data sentinel preserved, disable/enable active. No Slack credentials used. Host built from the prepared conversation/attention implementation checkout; not the public upstream host.
+- Live Workfloor: installed 0.5.0, preserved existing settings, added only the public Workfloor origin needed for link validation. One Chore Agent call through the real SSH executor delivered one private preview card. Slack readback identifies its bold issue heading and all three buttons. No card state changed and no other recipient was notified.
+- Visual: inspected the implemented renderer's synthetic payload in Slack Block Kit Builder on desktop and mobile, light and dark themes. Heading and summary wrap; all buttons remain visible. Screenshots inspected in the task. This is provider-native preview evidence, not a physical mobile-client test. The live Slack browser was unresponsive; no live button click is claimed. Outbound URL equality is covered by tests.
+- Observer: updated only its prompt to supply card metadata on new waiting episodes and preserve exact old retry arguments. Readback matched, with schedule, enabled state and execution/routing settings unchanged. Timer remains paused.
+- Conversation activation is separate: the current notification-only observer does not bind Slack replies. It remains disabled pending Slack app setup; cards do not enable it implicitly.
+
+The HTML preview is illustrative; sample-blocks.json was exported from the implemented Go renderer with synthetic content.

@@ -47,10 +47,14 @@ func (p *slackPlugin) InvokeAgentTool(ctx context.Context, req *pluginsdk.AgentT
 	c := req.Context
 	if !slackUserID.MatchString(user) || strings.TrimSpace(text) == "" || !utf8.ValidString(text) || utf8.RuneCountInString(text) > 4000 || len(key) == 0 || len(key) > 200 ||
 		strings.ContainsAny(text, "<>\x00") || strings.Contains(text, "@channel") || strings.Contains(text, "@here") || strings.Contains(text, "@everyone") ||
-		c.WorkspaceID == "" || c.TaskID == "" || c.SessionID == "" || (c.Surface != "kanban-task" && c.Surface != "office-task" && c.Surface != "automation") || len(req.Arguments) != 3 {
+		c.WorkspaceID == "" || c.TaskID == "" || c.SessionID == "" || (c.Surface != "kanban-task" && c.Surface != "office-task" && c.Surface != "automation") || !notificationArguments(req.Arguments, false) {
 		return notificationResult("invalid_request", user, false), nil
 	}
-	return p.deliverNotification(ctx, c.WorkspaceID, user, text, key), nil
+	message, status := p.notificationMessage(ctx, req, text, "")
+	if status != "" {
+		return notificationResult(status, user, false), nil
+	}
+	return p.deliverNotificationMessage(ctx, c.WorkspaceID, user, message, key), nil
 }
 
 // An exclusive, plugin-owned journal claim survives restarts. A missing or
@@ -68,6 +72,10 @@ func notificationDigest(parts ...string) string {
 }
 
 func (p *slackPlugin) deliverNotification(ctx context.Context, workspace, user, text, key string) *pluginsdk.AgentToolResult {
+	return p.deliverNotificationMessage(ctx, workspace, user, notificationMessage{text: text, fingerprint: notificationDigest(text)}, key)
+}
+
+func (p *slackPlugin) deliverNotificationMessage(ctx context.Context, workspace, user string, message notificationMessage, key string) *pluginsdk.AgentToolResult {
 	root := os.Getenv("KANDEV_PLUGIN_DATA_DIR")
 	if root == "" {
 		return notificationResult("storage_unavailable", user, false)
@@ -77,7 +85,7 @@ func (p *slackPlugin) deliverNotification(ctx context.Context, workspace, user, 
 		return notificationResult("storage_unavailable", user, false)
 	}
 	path := filepath.Join(dir, notificationDigest(workspace, user, key)+".jsonl")
-	fingerprint := notificationDigest(text)
+	fingerprint := message.fingerprint
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if os.IsExist(err) {
 		return replayNotification(path, fingerprint, user)
@@ -94,7 +102,7 @@ func (p *slackPlugin) deliverNotification(ctx context.Context, workspace, user, 
 	if host := p.Host(); host != nil {
 		if cfg, err := host.GetConfig(ctx); err == nil {
 			if token, ok := cfg["bot_token"].(string); ok && strings.HasPrefix(token, "xoxb-") {
-				result = newClient(token, "").sendNotification(ctx, user, text)
+				result = newClient(token, "").sendNotificationMessage(ctx, user, message)
 			}
 		}
 	}
@@ -143,12 +151,19 @@ func replayNotification(path, fingerprint, user string) *pluginsdk.AgentToolResu
 }
 
 func (c *client) sendNotification(ctx context.Context, user, text string) *pluginsdk.AgentToolResult {
+	return c.sendNotificationMessage(ctx, user, notificationMessage{text: text})
+}
+
+func (c *client) sendNotificationMessage(ctx context.Context, user string, message notificationMessage) *pluginsdk.AgentToolResult {
 	// Never let redirects replay a POST, even if a proxy returns 307/308.
 	transport := *c.http
 	transport.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	sender := *c
 	sender.http = &transport
-	params := url.Values{"channel": {user}, "text": {text}, "mrkdwn": {"false"}, "link_names": {"false"}, "unfurl_links": {"false"}, "unfurl_media": {"false"}}
+	params := url.Values{"channel": {user}, "text": {message.text}, "mrkdwn": {"false"}, "link_names": {"false"}, "unfurl_links": {"false"}, "unfurl_media": {"false"}}
+	if message.blocks != "" {
+		params.Set("blocks", message.blocks)
+	}
 	var response struct {
 		Channel string `json:"channel"`
 		TS      string `json:"ts"`

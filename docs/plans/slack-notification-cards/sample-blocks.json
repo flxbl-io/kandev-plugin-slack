@@ -1,0 +1,82 @@
+{
+  "blocks": [
+    {
+      "elements": [
+        {
+          "elements": [
+            {
+              "style": {
+                "bold": true
+              },
+              "text": "#123 · Fix source package dependency resolution",
+              "type": "text"
+            }
+          ],
+          "type": "rich_text_section"
+        }
+      ],
+      "type": "rich_text"
+    },
+    {
+      "elements": [
+        {
+          "emoji": true,
+          "text": "Engineering · example/project",
+          "type": "plain_text"
+        }
+      ],
+      "type": "context"
+    },
+    {
+      "type": "divider"
+    },
+    {
+      "text": {
+        "emoji": true,
+        "text": "🟡 Needs your decision\nBuild is complete. Choose the next step for this card.",
+        "type": "plain_text"
+      },
+      "type": "section"
+    },
+    {
+      "elements": [
+        {
+          "action_id": "open_workfloor",
+          "style": "primary",
+          "text": {
+            "emoji": true,
+            "text": "Open in Workfloor",
+            "type": "plain_text"
+          },
+          "type": "button",
+          "url": "https://workfloor.example/?workspaceId=demo\u0026taskId=example\u0026sessionId=preview"
+        },
+        {
+          "action_id": "open_issue",
+          "text": {
+            "emoji": true,
+            "text": "View issue",
+            "type": "plain_text"
+          },
+          "type": "button",
+          "url": "https://github.com/example/project/issues/123"
+        },
+        {
+          "action_id": "open_pr",
+          "text": {
+            "emoji": true,
+            "text": "View PR",
+            "type": "plain_text"
+          },
+          "type": "button",
+          "url": "https://github.com/example/project/pull/124"
+        }
+      ],
+      "type": "actions"
+    }
+  ],
+  "mrkdwn": false,
+  "text": "#123 · Fix source package dependency resolution\nEngineering · example/project\n🟡 Needs your decision\nBuild is complete. Choose the next step for this card.\nhttps://workfloor.example/?workspaceId=demo\u0026taskId=example\u0026sessionId=preview\nhttps://github.com/example/project/issues/123\nhttps://github.com/example/project/pull/124",
+  "unfurl_links": false,
+  "unfurl_media": false
+}
