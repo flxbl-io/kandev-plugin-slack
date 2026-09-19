@@ -1,7 +1,8 @@
 .PHONY: build run test fmt vet package package-host verify-package verify-package-host clean
 
 BIN := bin/kandev-plugin-slack
-VERSION := 0.2.0
+VERSION := 0.2.1
+MANIFEST ?= manifest.yaml
 STAGE := .build/stage
 PKG_OUT := kandev-plugin-slack-$(VERSION).tar.gz
 KANDEV_BACKEND := ../kandev/apps/backend
@@ -32,7 +33,7 @@ vet:
 package:
 	rm -rf $(STAGE)
 	mkdir -p $(STAGE)/server $(STAGE)/ui
-	cp manifest.yaml $(STAGE)/manifest.yaml
+	cp $(MANIFEST) $(STAGE)/manifest.yaml
 	cp -r assets $(STAGE)/assets
 	cp README.md $(STAGE)/README.md
 	cp slack-app-manifest.yaml $(STAGE)/slack-app-manifest.yaml
@@ -50,7 +51,7 @@ package:
 package-host:
 	rm -rf $(STAGE)
 	mkdir -p $(STAGE)/server $(STAGE)/ui
-	cp manifest.yaml $(STAGE)/manifest.yaml
+	cp $(MANIFEST) $(STAGE)/manifest.yaml
 	cp -r assets $(STAGE)/assets
 	cp README.md $(STAGE)/README.md
 	cp slack-app-manifest.yaml $(STAGE)/slack-app-manifest.yaml

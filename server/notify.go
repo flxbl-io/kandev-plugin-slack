@@ -44,7 +44,7 @@ func (p *slackPlugin) InvokeAgentTool(ctx context.Context, req *pluginsdk.AgentT
 	c := req.Context
 	if !slackUserID.MatchString(user) || strings.TrimSpace(text) == "" || !utf8.ValidString(text) || utf8.RuneCountInString(text) > 4000 || len(key) == 0 || len(key) > 200 ||
 		strings.ContainsAny(text, "<>\x00") || strings.Contains(text, "@channel") || strings.Contains(text, "@here") || strings.Contains(text, "@everyone") ||
-		c.WorkspaceID == "" || c.TaskID == "" || c.SessionID == "" || (c.Surface != "kanban-task" && c.Surface != "office-task") || len(req.Arguments) != 3 {
+		c.WorkspaceID == "" || c.TaskID == "" || c.SessionID == "" || (c.Surface != "kanban-task" && c.Surface != "office-task" && c.Surface != "automation") || len(req.Arguments) != 3 {
 		return notificationResult("invalid_request", user, false), nil
 	}
 	return p.deliverNotification(ctx, c.WorkspaceID, user, text, key), nil

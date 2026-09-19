@@ -287,3 +287,29 @@ func TestNotificationErrorFallbackRetainsStructuredStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestAutomationNotificationDeliveryAndRestartDedup(t *testing.T) {
+	t.Setenv("KANDEV_PLUGIN_DATA_DIR", t.TempDir())
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		fmt.Fprint(w, `{"ok":true,"channel":"D12345678","ts":"12345.000002"}`)
+	}))
+	defer srv.Close()
+	original := slackAPIBase
+	slackAPIBase = srv.URL
+	t.Cleanup(func() { slackAPIBase = original })
+	for i := 0; i < 2; i++ {
+		req := notificationRequest()
+		req.Context.Surface = "automation"
+		// A replacement observer task still addresses the same logical notification.
+		req.Context.TaskID = fmt.Sprintf("observer-%d", i)
+		result, err := notificationPlugin().InvokeAgentTool(context.Background(), req)
+		if err != nil || result.IsError || result.StructuredContent["status"] != "sent" || result.StructuredContent["duplicate"] != (i == 1) {
+			t.Fatalf("automation result %+v, %v", result, err)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("sent %d messages, want one", calls)
+	}
+}

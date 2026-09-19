@@ -242,5 +242,32 @@ nothing here has been released yet:
 
 ```bash
 curl -X DELETE localhost:<port>/api/plugins/kandev-plugin-slack
-curl -F package=@kandev-plugin-slack-0.2.0.tar.gz localhost:<port>/api/plugins/install
+curl -F package=@kandev-plugin-slack-0.2.1.tar.gz localhost:<port>/api/plugins/install
 ```
+
+
+### Hidden automation runs
+
+The notification handler also accepts host-verified `automation` context.
+The default package continues to declare Kanban and Office surfaces for
+compatibility with released upstream hosts. Enabling hidden automation use
+requires a host and agentctl that support automation plugin tools; a plugin
+restart alone does not add that host capability.
+
+For such a deployment, copy `manifest.yaml` to a deployment-owned manifest and
+add `automation` to `notify_user.surfaces`, preserving the other fields. Build
+with `make package verify-package MANIFEST=/absolute/path/to/manifest.yaml
+KANDEV_BACKEND=/absolute/path/to/supporting-host/apps/backend` (one command).
+Install only after upgrading the host and agentctl. Record the source revision,
+manifest overlay and package checksum; the resulting package differs from the
+default release. Do not expose the tool by pretending the run is a Kanban task.
+
+Automation runs do not need task-plan APIs for a notification ledger. Use an
+atomically replaced file in the reusable run's scratch directory. Key each
+notification by workspace, card, current session, assigned person and stable
+pending-request ID (never poll time). Persist the exact recipient, text and
+idempotency key before sending; on interruption reuse those exact arguments.
+The plugin's durable journal prevents repeat delivery even after an observer
+replacement loses its local ledger. An uncertain/failed result remains blocked
+for human reconciliation; never invent another key to retry it. Validate a
+controlled send and identical repeated call before enabling a schedule.
