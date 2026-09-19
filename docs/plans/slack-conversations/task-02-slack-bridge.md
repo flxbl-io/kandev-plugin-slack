@@ -1,7 +1,7 @@
 ---
 id: "02-slack-bridge"
 title: "Bind Slack threads to existing card conversations"
-status: pending
+status: in_progress
 wave: 2
 depends_on:
   - 01-host-conversations
@@ -62,4 +62,6 @@ sequential
 No general assistant, permission approvals, or production rollout in this work order.
 
 ## Results
-Pending implementation.
+Implementation and local checks completed; integrated installation/upgrade and
+live pilot remain pending deployment. See [validation](validation.md). The observer
+prompt and production notification schedule have not been changed.

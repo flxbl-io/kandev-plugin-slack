@@ -1,8 +1,9 @@
 .PHONY: build run test fmt vet package package-host verify-package verify-package-host clean
 
 BIN := bin/kandev-plugin-slack
-VERSION := 0.2.1
+VERSION := 0.3.0
 MANIFEST ?= manifest.yaml
+GO_BUILD_FLAGS ?=
 STAGE := .build/stage
 PKG_OUT := kandev-plugin-slack-$(VERSION).tar.gz
 KANDEV_BACKEND := ../kandev/apps/backend
@@ -11,7 +12,7 @@ KANDEV_BACKEND := ../kandev/apps/backend
 ## the installed-plugin path always goes through package/package-host.
 build:
 	mkdir -p bin
-	go build -o $(BIN) ./server
+	go build $(GO_BUILD_FLAGS) -o $(BIN) ./server
 
 ## Build + run. Mainly a smoke check: kandev normally spawns this binary
 ## itself over the go-plugin handshake, so a bare run just blocks.
@@ -38,11 +39,11 @@ package:
 	cp README.md $(STAGE)/README.md
 	cp slack-app-manifest.yaml $(STAGE)/slack-app-manifest.yaml
 	cp ui/bundle.js $(STAGE)/ui/bundle.js
-	GOOS=linux   GOARCH=amd64 go build -o $(STAGE)/server/plugin-linux-amd64       ./server
-	GOOS=linux   GOARCH=arm64 go build -o $(STAGE)/server/plugin-linux-arm64       ./server
-	GOOS=darwin  GOARCH=amd64 go build -o $(STAGE)/server/plugin-darwin-amd64      ./server
-	GOOS=darwin  GOARCH=arm64 go build -o $(STAGE)/server/plugin-darwin-arm64      ./server
-	GOOS=windows GOARCH=amd64 go build -o $(STAGE)/server/plugin-windows-amd64.exe ./server
+	GOOS=linux   GOARCH=amd64 go build $(GO_BUILD_FLAGS) -o $(STAGE)/server/plugin-linux-amd64       ./server
+	GOOS=linux   GOARCH=arm64 go build $(GO_BUILD_FLAGS) -o $(STAGE)/server/plugin-linux-arm64       ./server
+	GOOS=darwin  GOARCH=amd64 go build $(GO_BUILD_FLAGS) -o $(STAGE)/server/plugin-darwin-amd64      ./server
+	GOOS=darwin  GOARCH=arm64 go build $(GO_BUILD_FLAGS) -o $(STAGE)/server/plugin-darwin-arm64      ./server
+	GOOS=windows GOARCH=amd64 go build $(GO_BUILD_FLAGS) -o $(STAGE)/server/plugin-windows-amd64.exe ./server
 	go -C $(KANDEV_BACKEND) run ./cmd/plugin-pack -dir $(abspath $(STAGE)) -out $(abspath $(PKG_OUT))
 	rm -rf $(STAGE)
 	@echo "Wrote $(PKG_OUT)"
@@ -56,7 +57,7 @@ package-host:
 	cp README.md $(STAGE)/README.md
 	cp slack-app-manifest.yaml $(STAGE)/slack-app-manifest.yaml
 	cp ui/bundle.js $(STAGE)/ui/bundle.js
-	go build -o $(STAGE)/server/plugin-$$(go env GOOS)-$$(go env GOARCH)$$(go env GOEXE) ./server
+	go build $(GO_BUILD_FLAGS) -o $(STAGE)/server/plugin-$$(go env GOOS)-$$(go env GOARCH)$$(go env GOEXE) ./server
 	go -C $(KANDEV_BACKEND) run ./cmd/plugin-pack -dir $(abspath $(STAGE)) -out $(abspath $(PKG_OUT)) -platform-only
 	rm -rf $(STAGE)
 	@echo "Wrote $(PKG_OUT)"

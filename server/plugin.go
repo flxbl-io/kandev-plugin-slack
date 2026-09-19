@@ -18,6 +18,7 @@ type slackPlugin struct {
 	pluginsdk.UnimplementedPlugin
 
 	supervisor *supervisor
+	bridge     *conversationBridge
 
 	startOnce sync.Once
 	// runCtx bounds the polling loop. Kandev owns the subprocess lifecycle
@@ -28,7 +29,9 @@ type slackPlugin struct {
 
 func newSlackPlugin(ctx context.Context) *slackPlugin {
 	p := &slackPlugin{runCtx: ctx}
+	p.bridge = &conversationBridge{host: func() pluginsdk.Host { return p.Host() }, wake: make(chan struct{}, 1)}
 	p.supervisor = newSupervisor(func() pluginsdk.Host { return p.Host() })
+	p.supervisor.persistDM = p.bridge.persist
 	return p
 }
 
@@ -40,6 +43,7 @@ func (p *slackPlugin) SetHost(h pluginsdk.Host) {
 	p.UnimplementedPlugin.SetHost(h)
 	p.startOnce.Do(func() {
 		go p.supervisor.Run(p.runCtx)
+		go p.bridge.run(p.runCtx)
 	})
 }
 

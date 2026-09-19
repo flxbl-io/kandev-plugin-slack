@@ -35,6 +35,9 @@ func (p *slackPlugin) InvokeAgentTool(ctx context.Context, req *pluginsdk.AgentT
 			result.Text = string(raw)
 		}
 	}()
+	if req != nil && req.Name == "notify_task_user" {
+		return p.notifyTaskUser(ctx, req), nil
+	}
 	if req == nil || req.Name != "notify_user" {
 		return notificationResult("invalid_request", "", false), nil
 	}

@@ -15,7 +15,7 @@ Reply to a card's notification thread, continue that card's existing agent, and 
 
 Build the human-aware, retry-safe host path first, then the plugin bridge. Keep the current production notification plugin working while this is developed. Scope is existing-card free-text conversation; formal questions and permissions retain their Workfloor controls.
 
-- [ ] [01: Host conversation contract](task-01-host-conversations.md)
+- [x] [01: Host conversation contract](task-01-host-conversations.md)
 - [ ] [02: Plugin bridge and end-to-end proof](task-02-slack-bridge.md)
 
 Open implementation PRs against flxbl-io repositories after relevant local tests. No PR to public upstream. Keep host and plugin CI evidence distinct; neither a mock test nor Slack auth.test proves live conversation delivery. Merge/deploy only with user authorization.
@@ -26,4 +26,11 @@ Use a disposable host and fake Slack first: idle reply → original agent → sa
 
 ## Results
 
-Design only. Current source/SDK boundaries inspected; no implementation, tests of new behavior, Slack scope change, or production deployment performed. Notification schedule remains as previously paused. The main delivery dependency is a new Host contract, rather than a Slack-only configuration toggle.
+Implementation is prepared in paired FLXBL draft PRs. Local host policy,
+persistence, queue and gRPC checks, plugin HTTP/Socket fixture tests, replay and
+restart tests, race checks, and five-platform package verification pass. A real
+packaged subprocess invokes the new Host API and refuses an unauthorized target
+without delivering to Slack. See [validation](validation.md) for exact commands.
+
+Integrated instance installation/upgrade and the real Slack pilot remain pending.
+No production settings, user mappings, observer prompts, or schedule were changed.

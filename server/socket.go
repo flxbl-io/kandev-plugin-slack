@@ -50,14 +50,20 @@ type socketEnvelope struct {
 
 // eventsAPIPayload is the `events_api` frame's payload.
 type eventsAPIPayload struct {
-	Event struct {
-		Type     string `json:"type"`
-		User     string `json:"user"`
-		Text     string `json:"text"`
-		TS       string `json:"ts"`
-		ThreadTS string `json:"thread_ts"`
-		Channel  string `json:"channel"`
-		BotID    string `json:"bot_id"`
+	TeamID         string `json:"team_id"`
+	AppID          string `json:"api_app_id"`
+	EventID        string `json:"event_id"`
+	ExternalShared bool   `json:"is_ext_shared_channel"`
+	Event          struct {
+		Type        string `json:"type"`
+		ChannelType string `json:"channel_type"`
+		Subtype     string `json:"subtype"`
+		User        string `json:"user"`
+		Text        string `json:"text"`
+		TS          string `json:"ts"`
+		ThreadTS    string `json:"thread_ts"`
+		Channel     string `json:"channel"`
+		BotID       string `json:"bot_id"`
 	} `json:"event"`
 }
 
@@ -106,7 +112,8 @@ func OpenSocketConnection(ctx context.Context, appToken string) (string, error) 
 // socketListener maintains the Socket Mode connection and hands each inbound
 // request to the shared triage path.
 type socketListener struct {
-	appToken string
+	persistDM func(context.Context, json.RawMessage) error
+	appToken  string
 	// handle processes one request. It runs off the read loop so a slow
 	// triage — an agent call takes seconds — cannot delay the next ack.
 	handle func(context.Context, inboundRequest)
@@ -209,6 +216,14 @@ func (l *socketListener) readLoop(ctx context.Context, conn *websocket.Conn) err
 			// warns before closing. Either way the caller redials.
 			return nil
 		case "events_api", "slash_commands":
+			if env.Type == "events_api" && l.persistDM != nil {
+				var payload eventsAPIPayload
+				if json.Unmarshal(env.Payload, &payload) == nil && payload.Event.User != l.botUserID {
+					if err := l.persistDM(ctx, env.Payload); err != nil {
+						return err
+					}
+				}
+			}
 			l.ack(conn, env.EnvelopeID)
 			l.dispatch(ctx, env)
 		default:

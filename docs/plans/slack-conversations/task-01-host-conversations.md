@@ -1,7 +1,7 @@
 ---
 id: "01-host-conversations"
 title: "Authorize and deduplicate external conversation replies"
-status: pending
+status: completed
 wave: 1
 depends_on: []
 plan: "plan.md"
@@ -57,4 +57,8 @@ sequential
 No general assistant, permission approvals, or production rollout in this work order.
 
 ## Results
-Pending implementation.
+Implemented in the paired FLXBL host branch. Focused race tests, capability denial,
+human/target policy checks, SQLite persistence/replay, real bidirectional gRPC with
+a mock agent, queue provenance and adjacent QueueUserPrompt tests pass. Normal
+host commit hooks and documentation checks pass. PostgreSQL behavior coverage is
+present but skipped locally because no database runtime is available.
