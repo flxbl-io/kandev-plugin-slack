@@ -6,7 +6,7 @@ migration: complete
 owners:
   - flxbl-io
 ---
-# Slack conversations
+# Slack work management
 
 The standalone Slack plugin owns the binding between a Slack thread and a Workfloor conversation, provider delivery, and recovery. Workfloor owns human identity, authorization, task/session state, and prompt execution. The retired in-tree Slack integration is not extended.
 
@@ -14,4 +14,7 @@ The standalone Slack plugin owns the binding between a Slack thread and a Workfl
 - [System design](system-design/card-conversations.md)
 - [Delivery plan](../../plans/slack-conversations/plan.md)
 
-Existing channel mentions and slash-command task creation remain supported. This first release adds conversations on existing cards, not a general assistant or a replacement permission UI.
+Existing channel mentions and slash-command task creation remain supported. Card conversations remain the default. General chat is a separately gated proposed extension; formal permissions remain in Workfloor.
+
+- [Personal digest requirements](requirements/personal-digests.md) and [design](system-design/personal-digests.md).
+- [General chat requirements](requirements/general-chat.md), [design](system-design/general-chat.md), and [delivery plan](../../plans/slack-general-chat/plan.md).
