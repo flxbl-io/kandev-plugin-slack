@@ -17,3 +17,8 @@ The script is repeatable and checks the existing SendMessage contract before
 inserting the three optional conversation RPCs. Deploying this SDK overlay does
 not implement them in an old host: the matching Workfloor host change is required.
 Unimplemented RPCs fail closed. Existing notification and triage APIs remain usable.
+
+The overlay also includes the additive optional `AttentionHost` read-only
+`ResolveAttentionTarget(ConversationTarget)` RPC. The host verifies the current
+assigned human and primary session before digest disclosure, including failed
+sessions. It requires `api_read:attention`; old hosts return Unimplemented.

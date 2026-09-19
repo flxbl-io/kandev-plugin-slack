@@ -1,0 +1,20 @@
+package pluginsdk
+
+import (
+ "context"
+ pluginv1 "github.com/kandev/kandev/proto/kandev/plugin/v1"
+)
+
+// AttentionHost authorizes disclosure of current assigned task/session data to
+// a mapped human, including failed sessions. It never grants prompt permission.
+// Requires api_read:attention; the plugin authenticates its human mapping.
+type AttentionHost interface {Attention() AttentionAccessor}
+type AttentionAccessor interface {Resolve(context.Context,ConversationTarget) error}
+func Attention(h Host)(AttentionAccessor,bool){a,ok:=h.(AttentionHost);if !ok{return nil,false};return a.Attention(),true}
+func(h *grpcHostClient) Attention() AttentionAccessor{return grpcAttentionAccessor{h.client}}
+type grpcAttentionAccessor struct{client pluginv1.HostClient}
+func(a grpcAttentionAccessor) Resolve(ctx context.Context,t ConversationTarget)error{_,err:=a.client.ResolveAttentionTarget(ctx,t.toProto());return err}
+func(s *grpcHostServer) ResolveAttentionTarget(ctx context.Context,t *pluginv1.ConversationTarget)(*pluginv1.ConversationTarget,error){
+ a,ok:=s.impl.(AttentionHost);if !ok{return nil,errUnimplementedHostData("attention")}
+ if err:=a.Attention().Resolve(ctx,conversationTargetFromProto(t));err!=nil{return nil,err};return t,nil
+}

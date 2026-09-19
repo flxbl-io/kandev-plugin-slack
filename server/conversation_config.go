@@ -11,11 +11,14 @@ import (
 type conversationSettings struct {
 	Team, App, BaseURL, Token string
 	Users                     map[string]string
+	Digests, Conversations    bool
 }
 
 func loadConversations(raw map[string]any) (conversationSettings, error) {
 	c := conversationSettings{Team: configString(raw, "conversation_team_id"), App: configString(raw, "conversation_app_id"), BaseURL: configString(raw, "workfloor_url"), Token: configString(raw, "bot_token")}
-	if !configBool(raw, "conversations_enabled") {
+	c.Digests = configBool(raw, "digests_enabled")
+	c.Conversations = configBool(raw, "conversations_enabled")
+	if !c.Conversations && !c.Digests {
 		return c, errors.New("conversations disabled")
 	}
 	if !strings.HasPrefix(c.Team, "T") || !strings.HasPrefix(c.App, "A") || !strings.HasPrefix(c.Token, "xoxb-") {

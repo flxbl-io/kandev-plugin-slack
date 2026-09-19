@@ -333,3 +333,51 @@ resent, even after restart. Logs identify the affected event digest; inspect its
 outbox record and the actual Slack thread before any manual recovery. Likewise,
 an uncertain host receipt requires inspecting the card before issuing a new
 instruction. Never bypass either journal by inventing a fresh idempotency key.
+
+## Personal daily attention digests (0.4.0)
+
+Each mapped person can configure a combined digest across their accessible
+workspaces by sending the Workfloor bot a **new DM**, outside a card thread:
+
+```text
+digest at 09:00 Australia/Melbourne weekdays
+digest at 17:30 Europe/London daily
+digest status
+digest off
+digest help
+```
+
+Times use the specified IANA timezone, including daylight saving. Delivery is
+once per local date, with at most two hours of catch-up; no historical backlog
+is sent after a long outage. No message is sent when nothing needs attention.
+Settings and delivery records survive plugin restart/upgrade. Each Slack sender
+changes only their own settings; no one is opted in automatically. Workspace
+subsets and arbitrary weekday combinations are not part of this initial version.
+
+An administrator enables `digests_enabled` and configures the existing
+`conversation_team_id`, `conversation_app_id`, `conversation_users` verified
+human mapping, bot token and `workfloor_url`. Digests can run while card
+conversations are disabled. No additional Slack scopes beyond `message.im` and
+`im:history` used by conversations are needed. Use the Messages tab on desktop
+or mobile; no separate native Workfloor settings page is introduced.
+
+The host must implement the optional `AttentionHost` / `ResolveAttentionTarget`
+RPC, requiring `api_read:attention`. This extension only authorizes disclosure
+of current assigned task/session data, including failed sessions. Preferences,
+scheduling and aggregation remain in this plugin. There is no host scheduler
+change. The plugin additionally uses public task/session/interaction readers.
+An older host fails closed and does not deliver digests.
+
+The digest covers current primary sessions awaiting input, pending formal
+interactions, idle human-review steps and failed/blocked work. Historical
+sessions, ordinary running work, unassigned/inaccessible/completed/archived cards
+are excluded. Tasks without a primary session cannot currently be authorized
+for this digest. Items lead with the linked issue number/title when verified
+metadata is available; otherwise the card title is used. The digest links to
+Workfloor; it never answers permissions, resumes agents or selects a card from
+a multi-card reply. An incomplete scan is withheld, never reported as complete.
+
+Do not delete digest-day or outbox records to retry an uncertain Slack post.
+They prevent duplicates. Inspect the bot DM and reconcile manually. A stale
+prepared digest is held if any included task, assignment, mapping or attention
+state changes before delivery; a later date can produce a fresh digest.

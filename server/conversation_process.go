@@ -15,6 +15,12 @@ func (b *conversationBridge) process(ctx context.Context, c conversationSettings
 	if item.Team != c.Team || item.App != c.App {
 		return archiveConversation(key)
 	}
+	if isDigestCommand(item) {
+		return b.digestCommand(ctx, c, key, item)
+	}
+	if !c.Conversations {
+		return b.guide(ctx, c, key, item, digestUsage)
+	}
 	var binding conversationBinding
 	err := readConversation("bindings", notificationDigest(item.Team, item.Channel, item.Thread), &binding)
 	if err != nil && !os.IsNotExist(err) {

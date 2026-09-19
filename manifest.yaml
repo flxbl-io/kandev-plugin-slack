@@ -1,6 +1,6 @@
 id: "kandev-plugin-slack"
 api_version: 1
-version: "0.3.0"
+version: "0.4.0"
 min_kandev_version: "0.95.0"
 display_name: "Slack"
 description: "Turn Slack conversations into Kandev tasks. Mention @Kandev or run /kandev and a utility agent triages the thread into the right workspace, workflow and column, then replies in-thread."
@@ -29,7 +29,7 @@ capabilities:
   agent_invoke: true
   # The triage prompt is built from the real Kandev topology so the agent
   # picks an existing workspace/workflow/column rather than inventing one.
-  api_read: ["workspaces", "workflows", "repositories", "conversations"]
+  api_read: ["workspaces", "workflows", "repositories", "conversations", "tasks", "sessions", "interactions", "attention"]
   api_write: ["tasks", "conversations"]
 
 agent_tools:
@@ -91,6 +91,11 @@ webhooks:
 config_schema:
   type: object
   properties:
+    digests_enabled:
+      type: boolean
+      default: false
+      title: Personal daily digests
+      description: Allow mapped people to choose their own daily Slack digest time by DM. Requires the read-only Attention Host API; nobody is opted in automatically.
     conversations_enabled:
       type: boolean
       default: false

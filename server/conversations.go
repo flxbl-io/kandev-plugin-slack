@@ -13,8 +13,9 @@ import (
 )
 
 type conversationBridge struct {
-	host func() pluginsdk.Host
-	wake chan struct{}
+	host            func() pluginsdk.Host
+	wake            chan struct{}
+	lastDigestSweep time.Time
 }
 type conversationInbox struct {
 	Team, App, Event, Channel, Thread, User, Text, TS, Receipt string
@@ -99,6 +100,10 @@ func (b *conversationBridge) run(ctx context.Context) {
 		case <-b.wake:
 		}
 		b.reconcile(ctx)
+		if time.Since(b.lastDigestSweep) >= time.Minute {
+			b.lastDigestSweep = time.Now()
+			b.digestSweep(ctx, b.lastDigestSweep)
+		}
 	}
 }
 func (b *conversationBridge) reconcile(ctx context.Context) {
