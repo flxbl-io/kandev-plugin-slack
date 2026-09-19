@@ -26,6 +26,7 @@ jobs:
         uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
           repository: kdlbs/kandev
+          ref: f92877b4be2724c0bfa1f1cdbdd35edd68a24fa6 # v0.95.0
           path: kandev
           sparse-checkout: apps/backend
 
