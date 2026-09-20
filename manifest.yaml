@@ -1,6 +1,6 @@
 id: "kandev-plugin-slack"
 api_version: 1
-version: "0.6.0"
+version: "0.6.1"
 min_kandev_version: "0.95.0"
 display_name: "Slack"
 description: "Turn Slack conversations into Kandev tasks. Mention @Kandev or run /kandev and a utility agent triages the thread into the right workspace, workflow and column, then replies in-thread."
@@ -141,6 +141,14 @@ config_schema:
       type: string
       title: Conversation user mapping
       description: 'JSON object mapping TEAM_ID:SLACK_USER_ID to a Workfloor user ID. Example: {"T12345678:U12345678":"workfloor-user-id"}.'
+    notification_brand_name:
+      type: string
+      title: Notification app name
+      description: Optional app label shown inside every task notification card. Use your Slack app's display name, for example Flux. Maximum 80 characters; blank keeps the current layout.
+    notification_brand_icon_url:
+      type: string
+      title: Notification app icon URL
+      description: Optional public HTTPS image URL for the app logo. Requires a notification app name. Slack loads the image; unavailable images leave the name visible.
     workfloor_url:
       type: string
       title: Workfloor public origin

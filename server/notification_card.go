@@ -99,7 +99,7 @@ func (p *slackPlugin) notificationMessage(ctx context.Context, req *pluginsdk.Ag
 	if !card.validURLs(origin, req) {
 		return invalid, "invalid_request"
 	}
-	message.text, message.blocks = card.render(footer)
+	message.text, message.blocks = card.render(footer, config)
 	if utf8.RuneCountInString(message.text) > 4000 {
 		return invalid, "invalid_request"
 	}
@@ -189,7 +189,7 @@ func (c notificationCard) validURLs(origin string, req *pluginsdk.AgentToolReque
 func plainSlackText(s string) map[string]any {
 	return map[string]any{"type": "plain_text", "text": s, "emoji": true}
 }
-func (c notificationCard) render(footer string) (string, string) {
+func (c notificationCard) render(footer string, config map[string]any) (string, string) {
 	title := c.Title
 	if c.IssueNumber > 0 {
 		title = fmt.Sprintf("#%d · %s", c.IssueNumber, title)
@@ -229,6 +229,28 @@ func (c notificationCard) render(footer string) (string, string) {
 		blocks = append(blocks, map[string]any{"type": "context", "elements": []any{plainSlackText(strings.TrimSpace(footer))}})
 		fallback += footer
 	}
+	// Branding is operator-owned presentation, deliberately excluded from the
+	// request fingerprint so a rename cannot resend an existing delivery.
+	name, identity := notificationIdentity(config)
+	if identity != nil && utf8.RuneCountInString(name+"\n"+fallback) <= 4000 {
+		blocks = append([]any{identity}, blocks...)
+		fallback = name + "\n" + fallback
+	}
 	encoded, _ := json.Marshal(blocks)
 	return fallback, string(encoded)
+}
+
+func notificationIdentity(config map[string]any) (string, map[string]any) {
+	name, _ := config["notification_brand_name"].(string)
+	if !safeCardText(name, 80, false) {
+		return "", nil
+	}
+	elements := []any{}
+	icon, _ := config["notification_brand_icon_url"].(string)
+	decoded, err := url.PathUnescape(icon)
+	if _, ok := cardURL(icon); ok && err == nil && safeCardText(decoded, 800, false) {
+		elements = append(elements, map[string]any{"type": "image", "image_url": icon, "alt_text": name})
+	}
+	elements = append(elements, plainSlackText(name))
+	return name, map[string]any{"type": "context", "elements": elements}
 }
