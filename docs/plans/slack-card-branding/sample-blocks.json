@@ -1,6 +1,9 @@
 {
   "blocks": [
     {
+      "type": "divider"
+    },
+    {
       "elements": [
         {
           "alt_text": "Flux",
@@ -41,9 +44,6 @@
         }
       ],
       "type": "context"
-    },
-    {
-      "type": "divider"
     },
     {
       "text": {

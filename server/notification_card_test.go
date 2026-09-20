@@ -58,6 +58,9 @@ func TestNotificationCardDeliveryAndFallback(t *testing.T) {
 	if err := json.Unmarshal([]byte(f.Get("blocks")), &blocks); err != nil {
 		t.Fatalf("missing Slack blocks: %v", err)
 	}
+	if blocks[0]["type"] != "divider" {
+		t.Fatal("card boundary must precede the title")
+	}
 	if len(blocks) != 5 {
 		t.Fatalf("blocks=%d", len(blocks))
 	}
@@ -300,10 +303,16 @@ func TestNotificationCardBranding(t *testing.T) {
 				if err := json.Unmarshal([]byte(post.Get("blocks")), &blocks); err != nil {
 					t.Fatal(err)
 				}
-				if blocks[0]["type"] != "context" {
+				if blocks[0]["type"] != "divider" {
+					t.Fatal("each consecutive card needs a boundary before its identity")
+				}
+				if strings.Count(post.Get("blocks"), `"type":"divider"`) != 1 {
+					t.Fatal("card should have one boundary, not an internal divider")
+				}
+				if blocks[1]["type"] != "context" {
 					t.Fatalf("missing identity strip: %s", post.Get("blocks"))
 				}
-				elements := blocks[0]["elements"].([]any)
+				elements := blocks[1]["elements"].([]any)
 				if len(elements) != 2 {
 					t.Fatalf("identity elements=%v", elements)
 				}
@@ -312,7 +321,7 @@ func TestNotificationCardBranding(t *testing.T) {
 				if icon["type"] != "image" || icon["image_url"] != "https://cdn.example/flux.png" || icon["alt_text"] != "Flux" || label["type"] != "plain_text" || label["text"] != "Flux" {
 					t.Fatalf("identity=%v", elements)
 				}
-				if blocks[1]["type"] != "rich_text" || !strings.HasPrefix(post.Get("text"), "Flux\n#2419") {
+				if blocks[2]["type"] != "rich_text" || !strings.HasPrefix(post.Get("text"), "Flux\n#2419") {
 					t.Fatal("title or accessible identity missing")
 				}
 			}
