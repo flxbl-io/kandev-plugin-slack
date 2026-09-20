@@ -23,3 +23,5 @@ Existing channel mentions and slash-command task creation remain supported. Card
 - [Notification card design](system-design/notification-cards.md)
 - [Notification card plan and preview](../../plans/slack-notification-cards/plan.md)
 
+
+- [Proposed per-card app identity plan](../../plans/slack-card-branding/plan.md)
