@@ -309,6 +309,9 @@ are accepted. GitHub links must match the supplied repository and issue number;
 Workfloor links must use the configured origin and invocation workspace (plus
 the explicit task/session for bound notifications).
 
+Each structured card begins with a horizontal divider, before its app identity
+and title, so consecutive Slack messages have a clear boundary.
+
 To identify every card when Slack groups consecutive bot messages, set
 `notification_brand_name` to your app name (for example, `Flux`) and optionally
 set `notification_brand_icon_url` to the public HTTPS URL of your app icon.

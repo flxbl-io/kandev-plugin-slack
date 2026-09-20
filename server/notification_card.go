@@ -204,7 +204,6 @@ func (c notificationCard) render(footer string, config map[string]any) (string, 
 	blocks := []any{
 		map[string]any{"type": "rich_text", "elements": []any{map[string]any{"type": "rich_text_section", "elements": []any{map[string]any{"type": "text", "text": title, "style": map[string]bool{"bold": true}}}}}},
 		map[string]any{"type": "context", "elements": []any{plainSlackText(context)}},
-		map[string]any{"type": "divider"},
 		map[string]any{"type": "section", "text": plainSlackText(status + "\n" + c.Summary)},
 	}
 	button := func(id, label, target string, primary bool) map[string]any {
@@ -236,6 +235,8 @@ func (c notificationCard) render(footer string, config map[string]any) (string, 
 		blocks = append([]any{identity}, blocks...)
 		fallback = name + "\n" + fallback
 	}
+	// Slack groups adjacent bot messages; mark the boundary before all card content.
+	blocks = append([]any{map[string]any{"type": "divider"}}, blocks...)
 	encoded, _ := json.Marshal(blocks)
 	return fallback, string(encoded)
 }
