@@ -21,7 +21,7 @@ The Slack plugin owns the presentation of task attention notifications.
 
 Out of scope: digest redesign, general chat, host changes, retroactive edits and schedule changes.
 
-## Proposed app identity addition
+## App identity
 
 ### REQ-SLACK-CARD-003: Identity on every notification card
 

@@ -28,11 +28,11 @@ After testing and installing the new package, update only the existing observer'
 
 References: [Slack Block Kit](https://docs.slack.dev/block-kit/), [URL buttons](https://docs.slack.dev/reference/block-kit/block-elements/button-element/).
 
-## Proposed identity strip (REQ-SLACK-CARD-003)
+## Identity strip (REQ-SLACK-CARD-003)
 
 The Slack plugin owns the rendered card, so this change stays in the standalone plugin. Add optional operator settings `notification_brand_name` and `notification_brand_icon_url`, blank by default. For this instance, configure Flux and the existing Flux Slack icon's public HTTPS URL. Agents cannot supply or override branding through card arguments. No new Slack API scope, host API or per-notification profile lookup is needed.
 
-Prepend one native context block with an image element and plain-text name. Use the configured name for image alt text; include the name once at the beginning of the top-level accessible fallback. Keep the existing title and remaining block order. A name without an icon renders text only; an icon without a valid name is ignored. Bound names to 80 characters using the existing plain-text safety checks. Accept only bounded absolute HTTPS image URLs with no credentials, fragment or control characters. An invalid image is omitted; the server never fetches that URL. Slack loads the image. Invalid branding falls back to the current card rather than blocking task notification delivery.
+Prepend one native context block with an image element and plain-text name. Use the configured name for image alt text; include the name once at the beginning of the top-level accessible fallback. Keep the existing title and remaining block order. A name without an icon renders text only; an icon without a valid name is ignored. Bound names to 80 characters using the existing plain-text safety checks. Accept only bounded absolute HTTPS image URLs with no credentials, fragment or control characters. An invalid image is omitted; the server never fetches that URL. Slack loads the image. Invalid branding falls back to the current card rather than blocking task notification delivery. Omit the strip if its accessible label would exceed the existing fallback text limit.
 
 Branding is presentation configuration, not caller task content. Preserve the current canonical request fingerprint and journal keys: brand edits must not create idempotency conflicts or authorize resending old records. Resolve brand metadata from the same config snapshot already loaded by `notificationMessage`; do not change tool schemas, journal serialization, bindings or ambiguous-send handling. New messages use current settings; previously sent messages remain untouched.
 

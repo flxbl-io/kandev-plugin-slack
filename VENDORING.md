@@ -1,5 +1,14 @@
 # FLXBL customization register
 
-## Proposed notification card identity
+## Notification card identity
 
-The FLXBL fork plans optional operator-owned app name/logo inside structured Slack notifications. The design extends the existing notification-card capability; implementation is pending in [the work order](docs/plans/slack-card-branding/task-01-card-identity.md). No runtime behavior changes in this documentation commit. Preserve existing notification delivery, conversations, personal digests and general chat customizations.
+Version 0.6.1 adds optional operator-owned app name/logo settings to the standalone
+Slack plugin and displays them inside structured notification cards. Both notify
+tools share the renderer. Branding stays outside the delivery fingerprint so
+configuration edits preserve old receipts and reply bindings. Existing
+notifications are not rewritten or replayed. No host change or Slack scope is
+required. See the [design](docs/specs/slack/system-design/notification-cards.md)
+and [delivery plan](docs/plans/slack-card-branding/plan.md).
+
+Preserve existing FLXBL notification delivery, conversations, personal digests
+and general chat customizations during upstream integration.

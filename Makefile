@@ -1,7 +1,7 @@
 .PHONY: build run test fmt vet package package-host verify-package verify-package-host clean
 
 BIN := bin/kandev-plugin-slack
-VERSION := 0.6.0
+VERSION := 0.6.1
 MANIFEST ?= manifest.yaml
 GO_BUILD_FLAGS ?=
 STAGE := .build/stage

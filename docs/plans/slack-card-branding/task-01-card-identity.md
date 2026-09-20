@@ -1,7 +1,7 @@
 ---
 id: task-01-card-identity
 title: Configure and render card identity
-status: pending
+status: in_progress
 wave: 1
 depends_on: []
 plan: plan.md
@@ -22,7 +22,7 @@ Likely files: `server/notification_card.go`, `server/notification_card_test.go`,
 
 Verification from plugin root (sibling SDK checkout must have the existing public SDK overlay applied):
 ```sh
-go test -race ./server -run 'Test(Notification|Notify|EndToEnd)' -count=1
+go test -race ./server -run 'Test(Notification|BoundNotification|Notify|SessionFallback|Socket|SlashCommand|Mention)' -count=1
 go vet ./server
 make build
 python3 scripts/workfloor-manifest.py > /tmp/slack-branding-manifest.yaml
@@ -33,4 +33,4 @@ git diff --check
 
 Inspect rendered Block Kit with long titles, all attention states, icon absent/invalid, and config changed between original send and replay. Reuse existing disposable package smoke harness. Real Slack verification must preserve live ledger/config and notify only the existing Azlam pilot; do not replay old notifications merely for appearance. No artificial Workfloor browser E2E is needed for a Slack-only layout; verify the native plugin config fields if their host rendering is affected. CI must target the implementation head.
 
-Dependencies: current plugin master and sibling `../kandev/apps/backend` SDK overlay. Risks: stale operator icon URL, inaccessible images, Block Kit layout drift and accidental fingerprint changes. Parallelism: sequential. Results: pending.
+Dependencies: current plugin master and sibling `../kandev/apps/backend` SDK overlay. Risks: stale operator icon URL, inaccessible images, Block Kit layout drift and accidental fingerprint changes. Parallelism: sequential. Results: implementation and local verification passed; production/real Slack acceptance remains pending installation. See [verification](verification.md).

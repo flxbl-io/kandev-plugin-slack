@@ -1,0 +1,94 @@
+{
+  "blocks": [
+    {
+      "elements": [
+        {
+          "alt_text": "Flux",
+          "image_url": "https://cdn.example/flux.png",
+          "type": "image"
+        },
+        {
+          "emoji": true,
+          "text": "Flux",
+          "type": "plain_text"
+        }
+      ],
+      "type": "context"
+    },
+    {
+      "elements": [
+        {
+          "elements": [
+            {
+              "style": {
+                "bold": true
+              },
+              "text": "#123 · Fix source package dependency resolution",
+              "type": "text"
+            }
+          ],
+          "type": "rich_text_section"
+        }
+      ],
+      "type": "rich_text"
+    },
+    {
+      "elements": [
+        {
+          "emoji": true,
+          "text": "Engineering · example/project",
+          "type": "plain_text"
+        }
+      ],
+      "type": "context"
+    },
+    {
+      "type": "divider"
+    },
+    {
+      "text": {
+        "emoji": true,
+        "text": "🟣 Ready for review\nWork finished in Build. Review the result and move the card to Test when ready. Independent validation is still required.",
+        "type": "plain_text"
+      },
+      "type": "section"
+    },
+    {
+      "elements": [
+        {
+          "action_id": "open_workfloor",
+          "style": "primary",
+          "text": {
+            "emoji": true,
+            "text": "Open in Workfloor",
+            "type": "plain_text"
+          },
+          "type": "button",
+          "url": "https://workfloor.example/?workspaceId=demo\u0026taskId=example\u0026sessionId=preview"
+        },
+        {
+          "action_id": "open_issue",
+          "text": {
+            "emoji": true,
+            "text": "View issue",
+            "type": "plain_text"
+          },
+          "type": "button",
+          "url": "https://github.com/example/project/issues/123"
+        }
+      ],
+      "type": "actions"
+    },
+    {
+      "elements": [
+        {
+          "emoji": true,
+          "text": "Reply in this thread to continue this card. Questions and permissions must be answered in Workfloor.",
+          "type": "plain_text"
+        }
+      ],
+      "type": "context"
+    }
+  ],
+  "text": "Flux\n#123 · Fix source package dependency resolution\nEngineering · example/project\n🟣 Ready for review\nWork finished in Build. Review the result and move the card to Test when ready. Independent validation is still required.\nhttps://workfloor.example/?workspaceId=demo\u0026taskId=example\u0026sessionId=preview\nhttps://github.com/example/project/issues/123\n\nReply in this thread to continue this card. Questions and permissions must be answered in Workfloor."
+}

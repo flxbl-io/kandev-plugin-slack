@@ -157,6 +157,8 @@ func TestBoundNotificationCardPreservesBindingAndFooter(t *testing.T) {
 	t.Setenv("KANDEV_PLUGIN_DATA_DIR", t.TempDir())
 	posts := captureCardPosts(t)
 	h := &conversationTestHost{fakeHost: newFakeHost(conversationConfig())}
+	h.config["notification_brand_name"] = "Flux"
+	h.config["notification_brand_icon_url"] = "https://cdn.example/flux.png"
 	p := newSlackPlugin(context.Background())
 	p.UnimplementedPlugin.SetHost(h)
 	req := notificationRequest()
@@ -180,6 +182,11 @@ func TestBoundNotificationCardPreservesBindingAndFooter(t *testing.T) {
 	p.bridge.reconcile(context.Background())
 	if len(h.submitted) != 1 || h.submitted[0].Target.TaskID != "task" {
 		t.Fatal("card reply binding lost")
+	}
+	h.config["notification_brand_name"] = "Flux renamed"
+	replay, _ := p.InvokeAgentTool(context.Background(), req)
+	if replay.IsError || replay.StructuredContent["duplicate"] != true || len(*posts) != 1 {
+		t.Fatalf("bound brand replay failed: %+v", replay)
 	}
 	req.Arguments["card"].(map[string]any)["summary"] = "Changed summary"
 	again, _ := p.InvokeAgentTool(context.Background(), req)
@@ -261,5 +268,132 @@ func TestNotificationLegacyJournalSurvivesCardUpgrade(t *testing.T) {
 	got, _ = cardPlugin().InvokeAgentTool(context.Background(), req)
 	if got.StructuredContent["status"] != "idempotency_conflict" || len(*posts) != 0 {
 		t.Fatalf("format upgrade resent old notification %+v", got)
+	}
+}
+
+// @covers AC-SLACK-CARD-003.1, AC-SLACK-CARD-003.2, AC-SLACK-CARD-003.3
+func TestNotificationCardBranding(t *testing.T) {
+	for _, attention := range []string{"input", "review", "error"} {
+		t.Run(attention, func(t *testing.T) {
+			t.Setenv("KANDEV_PLUGIN_DATA_DIR", t.TempDir())
+			posts := captureCardPosts(t)
+			p := cardPlugin()
+			h := p.Host().(*fakeHost)
+			h.config["notification_brand_name"] = "Flux"
+			h.config["notification_brand_icon_url"] = "https://cdn.example/flux.png"
+			req := notificationRequest()
+			card := cardArguments()
+			card["attention"] = attention
+			req.Arguments["card"] = card
+			for i := 0; i < 2; i++ {
+				req.Arguments["idempotency_key"] = fmt.Sprintf("brand-%d", i)
+				got, _ := p.InvokeAgentTool(context.Background(), req)
+				if got.IsError {
+					t.Fatalf("notification rejected: %+v", got)
+				}
+			}
+			if len(*posts) != 2 {
+				t.Fatalf("posts=%d", len(*posts))
+			}
+			for _, post := range *posts {
+				var blocks []map[string]any
+				if err := json.Unmarshal([]byte(post.Get("blocks")), &blocks); err != nil {
+					t.Fatal(err)
+				}
+				if blocks[0]["type"] != "context" {
+					t.Fatalf("missing identity strip: %s", post.Get("blocks"))
+				}
+				elements := blocks[0]["elements"].([]any)
+				if len(elements) != 2 {
+					t.Fatalf("identity elements=%v", elements)
+				}
+				icon := elements[0].(map[string]any)
+				label := elements[1].(map[string]any)
+				if icon["type"] != "image" || icon["image_url"] != "https://cdn.example/flux.png" || icon["alt_text"] != "Flux" || label["type"] != "plain_text" || label["text"] != "Flux" {
+					t.Fatalf("identity=%v", elements)
+				}
+				if blocks[1]["type"] != "rich_text" || !strings.HasPrefix(post.Get("text"), "Flux\n#2419") {
+					t.Fatal("title or accessible identity missing")
+				}
+			}
+			h.config["notification_brand_name"] = "Renamed"
+			h.config["notification_brand_icon_url"] = "https://cdn.example/changed.png"
+			again, _ := p.InvokeAgentTool(context.Background(), req)
+			if again.IsError || again.StructuredContent["duplicate"] != true || len(*posts) != 2 {
+				t.Fatalf("brand change replay=%+v", again)
+			}
+		})
+	}
+}
+
+// @covers AC-SLACK-CARD-003.2
+func TestNotificationCardBrandingDegradesSafely(t *testing.T) {
+	cases := []struct {
+		name     string
+		brand    any
+		icon     any
+		wantName bool
+		wantIcon bool
+	}{
+		{"name only", "Flux", "", true, false},
+		{"icon only", "", "https://cdn.example/flux.png", false, false},
+		{"unsafe name", "<!here>", "https://cdn.example/flux.png", false, false},
+		{"long name", strings.Repeat("x", 81), "", false, false},
+		{"wrong type", 42, "", false, false},
+		{"insecure image", "Flux", "http://cdn.example/flux.png", true, false},
+		{"image credentials", "Flux", "https://user:password@cdn.example/flux.png", true, false},
+		{"image fragment", "Flux", "https://cdn.example/flux.png#x", true, false},
+		{"image encoded control", "Flux", "https://cdn.example/flux.png?x=%0A", true, false},
+		{"wrong image type", "Flux", 42, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := cardPlugin()
+			h := p.Host().(*fakeHost)
+			h.config["notification_brand_name"] = tc.brand
+			h.config["notification_brand_icon_url"] = tc.icon
+			req := notificationRequest()
+			req.Arguments["card"] = cardArguments()
+			message, status := p.notificationMessage(context.Background(), req, "Input needed", "")
+			if status != "" {
+				t.Fatalf("branding blocked delivery: %s", status)
+			}
+			if strings.HasPrefix(message.text, "Flux\n") != tc.wantName {
+				t.Fatalf("fallback=%q", message.text)
+			}
+			if strings.Contains(message.blocks, `"type":"image"`) != tc.wantIcon {
+				t.Fatalf("unsafe image rendered: %s", message.blocks)
+			}
+		})
+	}
+}
+
+// @covers AC-SLACK-CARD-003.3
+func TestNotificationCardBrandingPreservesUnbrandedReceiptAndPlainText(t *testing.T) {
+	t.Setenv("KANDEV_PLUGIN_DATA_DIR", t.TempDir())
+	posts := captureCardPosts(t)
+	p := cardPlugin()
+	req := notificationRequest()
+	req.Arguments["card"] = cardArguments()
+	first, _ := p.InvokeAgentTool(context.Background(), req)
+	if first.IsError {
+		t.Fatalf("first delivery=%+v", first)
+	}
+	p = cardPlugin() // Same durable journal, newly configured plugin process.
+	h := p.Host().(*fakeHost)
+	h.config["notification_brand_name"] = "Flux"
+	h.config["notification_brand_icon_url"] = "https://cdn.example/flux.png"
+	replay, _ := p.InvokeAgentTool(context.Background(), req)
+	if replay.IsError || replay.StructuredContent["duplicate"] != true || len(*posts) != 1 {
+		t.Fatalf("unbranded receipt replay=%+v", replay)
+	}
+	delete(req.Arguments, "card")
+	req.Arguments["idempotency_key"] = "text-only"
+	textOnly, _ := p.InvokeAgentTool(context.Background(), req)
+	if textOnly.IsError || len(*posts) != 2 {
+		t.Fatalf("plain text=%+v", textOnly)
+	}
+	if (*posts)[1].Get("blocks") != "" || (*posts)[1].Get("text") != req.Arguments["text"] {
+		t.Fatal("branding changed text-only delivery")
 	}
 }

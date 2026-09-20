@@ -309,6 +309,19 @@ are accepted. GitHub links must match the supplied repository and issue number;
 Workfloor links must use the configured origin and invocation workspace (plus
 the explicit task/session for bound notifications).
 
+To identify every card when Slack groups consecutive bot messages, set
+`notification_brand_name` to your app name (for example, `Flux`) and optionally
+set `notification_brand_icon_url` to the public HTTPS URL of your app icon.
+The plugin displays a small logo and name above the issue title. Names are limited
+to 80 characters. Invalid or absent icon URLs render the name alone; invalid or
+absent names retain the existing layout. Slack loads the image, so keep its URL
+publicly accessible. Branding uses no additional Slack permissions.
+
+These settings apply only to new structured notification cards. Renaming or
+replacing the icon does not edit or resend delivered cards, change reply threads,
+or alter text-only messages. Branding is omitted if adding its accessible label
+would exceed the notification text limit.
+
 Card metadata participates in the delivery fingerprint. Keep the old exact
 arguments and waiting-episode key for a retry, including a text-only notification
 sent before this upgrade. Changing an existing payload into a card conflicts; it

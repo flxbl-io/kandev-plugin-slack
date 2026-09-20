@@ -1,6 +1,6 @@
 ---
 created: 2026-09-20
-status: draft
+status: active
 requirements: [REQ-SLACK-CARD-003]
 system_design: [../../specs/slack/system-design/notification-cards.md]
 legacy_specs: []
@@ -15,4 +15,4 @@ Scope is notification cards only. Existing conversations, delivery records, sche
 
 Verification combines targeted renderer/delivery tests and package checks with two consecutive controlled Slack notifications viewed on desktop and mobile. A mocked provider response is not visual Slack evidence. Publish the implementation PR to flxbl-io/kandev-plugin-slack after local checks; production installation is a separate delivery step.
 
-Design checkpoint only: no runtime files changed and no plugin installed. Verification results: pending implementation.
+Implementation and local package/preview validation are complete. Real Slack desktop/mobile confirmation remains a post-install check. See [verification evidence](verification.md).
